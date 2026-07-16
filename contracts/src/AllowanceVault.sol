@@ -3,11 +3,14 @@ pragma solidity ^0.8.24;
 
 import {EIP712} from "openzeppelin-contracts/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @notice Holds a voluntary screen-time budget and releases one daily allowance
 /// only when TouchGrass's verifier signs a completed-day voucher.
 contract AllowanceVault is EIP712 {
     using ECDSA for bytes32;
+    using SafeERC20 for IERC20;
 
     uint256 public constant COOLDOWN = 7 days;
     uint16 public constant MIN_DURATION = 7;
@@ -37,7 +40,6 @@ contract AllowanceVault is EIP712 {
     error VoucherExpired();
     error InvalidVoucher();
     error SavingsStillLocked();
-    error TransferFailed();
 
     event ProgramCreated(
         uint256 indexed programId,
@@ -52,12 +54,14 @@ contract AllowanceVault is EIP712 {
     event SavingsWithdrawn(uint256 indexed programId, address indexed owner, uint256 amount);
 
     address public immutable verifier;
+    IERC20 public immutable asset;
     uint256 public nextProgramId;
     mapping(uint256 => Program) public programs;
 
-    constructor(address verifier_) EIP712("TouchGrassAllowanceVault", "1") {
-        if (verifier_ == address(0)) revert BadBeneficiary();
+    constructor(address verifier_, IERC20 asset_) EIP712("TouchGrassAllowanceVault", "1") {
+        if (verifier_ == address(0) || address(asset_) == address(0)) revert BadBeneficiary();
         verifier = verifier_;
+        asset = asset_;
     }
 
     function createProgram(
@@ -66,11 +70,16 @@ contract AllowanceVault is EIP712 {
         uint96 dailyAmount,
         address beneficiary,
         uint64 startAt
-    ) external payable returns (uint256 programId) {
+    ) external returns (uint256 programId) {
         if (durationDays < MIN_DURATION || durationDays > MAX_DURATION) revert BadDuration();
         if (beneficiary == address(0)) revert BadBeneficiary();
         if (startAt < block.timestamp || startAt > block.timestamp + 30 days) revert BadStartTime();
-        if (dailyAmount == 0 || msg.value != uint256(durationDays) * dailyAmount) revert BadFunding();
+        if (dailyAmount == 0) revert BadFunding();
+
+        uint256 budget = uint256(durationDays) * dailyAmount;
+        uint256 beforeBalance = asset.balanceOf(address(this));
+        asset.safeTransferFrom(msg.sender, address(this), budget);
+        if (asset.balanceOf(address(this)) != beforeBalance + budget) revert BadFunding();
 
         programId = nextProgramId++;
         programs[programId] = Program({
@@ -102,8 +111,7 @@ contract AllowanceVault is EIP712 {
         }
 
         program.claimedBitmap |= mask;
-        (bool sent,) = program.beneficiary.call{value: program.dailyAmount}("");
-        if (!sent) revert TransferFailed();
+        asset.safeTransfer(program.beneficiary, program.dailyAmount);
         emit DailyAllowanceClaimed(programId, dayIndex, program.dailyAmount);
     }
 
@@ -118,8 +126,7 @@ contract AllowanceVault is EIP712 {
         program.claimedBitmap = type(uint256).max;
         if (remaining == 0) return;
 
-        (bool sent,) = program.owner.call{value: remaining}("");
-        if (!sent) revert TransferFailed();
+        asset.safeTransfer(program.owner, remaining);
         emit SavingsWithdrawn(programId, program.owner, remaining);
     }
 

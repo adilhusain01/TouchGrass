@@ -14,4 +14,5 @@ export const getClient = () =>
   });
 
 export const vaultAddress = process.env.EXPO_PUBLIC_VAULT_ADDRESS as `0x${string}` | undefined;
+export const mockUsdcAddress = process.env.EXPO_PUBLIC_MOCK_USDC_ADDRESS as `0x${string}` | undefined;
 export const verifierUrl = process.env.EXPO_PUBLIC_VERIFIER_URL;

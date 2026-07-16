@@ -3,33 +3,43 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {AllowanceVault} from "../src/AllowanceVault.sol";
+import {MockUSDC} from "../src/MockUSDC.sol";
 
 contract AllowanceVaultTest is Test {
+    uint96 private constant DAILY_USDC = 1_000_000;
     uint256 private constant VERIFIER_KEY = 0xA11CE;
     address private verifier = vm.addr(VERIFIER_KEY);
     address private owner = makeAddr("owner");
     address private beneficiary = makeAddr("beneficiary");
     AllowanceVault private vault;
+    MockUSDC private usdc;
     uint64 private startAt;
 
     function setUp() public {
-        vault = new AllowanceVault(verifier);
-        vm.deal(owner, 100 ether);
+        usdc = new MockUSDC();
+        vault = new AllowanceVault(verifier, usdc);
+        usdc.mint();
+        vm.prank(address(this));
+        usdc.transfer(owner, 100_000_000);
+        vm.prank(owner);
+        usdc.approve(address(vault), type(uint256).max);
         startAt = uint64(block.timestamp + 1 days);
     }
 
     function testCreatesFullyFundedProgram() public {
         vm.prank(owner);
-        uint256 id = vault.createProgram{value: 14 ether}(14, 3 hours, 1 ether, beneficiary, startAt);
+        uint256 id = vault.createProgram(14, 3 hours, DAILY_USDC, beneficiary, startAt);
         (address programOwner,,,,,,) = vault.programs(id);
         assertEq(programOwner, owner);
-        assertEq(address(vault).balance, 14 ether);
+        assertEq(usdc.balanceOf(address(vault)), 14_000_000);
     }
 
-    function testRejectsUnderfundedProgram() public {
-        vm.expectRevert(AllowanceVault.BadFunding.selector);
+    function testRejectsProgramWithoutApproval() public {
         vm.prank(owner);
-        vault.createProgram{value: 13 ether}(14, 3 hours, 1 ether, beneficiary, startAt);
+        usdc.approve(address(vault), 0);
+        vm.expectRevert();
+        vm.prank(owner);
+        vault.createProgram(14, 3 hours, DAILY_USDC, beneficiary, startAt);
     }
 
     function testClaimsExactlyOnceAfterDayCompletes() public {
@@ -39,7 +49,7 @@ contract AllowanceVaultTest is Test {
         bytes memory signature = _sign(id, 0, validUntil);
 
         vault.claim(id, 0, validUntil, signature);
-        assertEq(beneficiary.balance, 1 ether);
+        assertEq(usdc.balanceOf(beneficiary), DAILY_USDC);
 
         vm.expectRevert(AllowanceVault.AlreadyClaimed.selector);
         vault.claim(id, 0, validUntil, signature);
@@ -65,15 +75,15 @@ contract AllowanceVaultTest is Test {
         vault.withdrawMaturedSavings(id);
 
         vm.warp(uint256(startAt) + 14 days + vault.COOLDOWN());
-        uint256 before = owner.balance;
+        uint256 before = usdc.balanceOf(owner);
         vm.prank(owner);
         vault.withdrawMaturedSavings(id);
-        assertEq(owner.balance, before + 14 ether);
+        assertEq(usdc.balanceOf(owner), before + 14_000_000);
     }
 
     function _createProgram() private returns (uint256) {
         vm.prank(owner);
-        return vault.createProgram{value: 14 ether}(14, 3 hours, 1 ether, beneficiary, startAt);
+        return vault.createProgram(14, 3 hours, DAILY_USDC, beneficiary, startAt);
     }
 
     function _sign(uint256 id, uint16 dayIndex, uint64 validUntil) private view returns (bytes memory) {

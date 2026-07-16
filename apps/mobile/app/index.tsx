@@ -21,15 +21,15 @@ import {
   useWalletBalance,
 } from "thirdweb/react";
 import { inAppWallet } from "thirdweb/wallets";
-import { getContract, prepareContractCall, toWei } from "thirdweb";
+import { getContract, prepareContractCall, toUnits } from "thirdweb";
 
-import { chain, getClient, vaultAddress, verifierUrl } from "@/constants/thirdweb";
+import { chain, getClient, mockUsdcAddress, vaultAddress, verifierUrl } from "@/constants/thirdweb";
 
 type Tab = "today" | "setup" | "vault" | "insights";
 type ProgramSettings = {
   duration: 7 | 14 | 28;
   targetHours: number;
-  dailyMon: string;
+  dailyUsdc: string;
   programId: string;
   startAt?: number;
 };
@@ -42,7 +42,7 @@ const line = "#D4CCBC";
 const moss = "#56734B";
 const softMoss = "#E5EAD8";
 const client = getClient();
-const defaultSettings: ProgramSettings = { duration: 14, targetHours: 3, dailyMon: "0.001", programId: "" };
+const defaultSettings: ProgramSettings = { duration: 14, targetHours: 3, dailyUsdc: "1", programId: "" };
 
 function dateStart() {
   const now = new Date();
@@ -145,28 +145,49 @@ export default function TouchGrass() {
 
   const createProgram = () => {
     if (!account) return Alert.alert("Connect your wallet", "Create an embedded wallet first.");
-    if (!vaultAddress) return Alert.alert("Contract not deployed", "Add EXPO_PUBLIC_VAULT_ADDRESS after deploying AllowanceVault.");
-    const amount = Number(settings.dailyMon);
-    if (!Number.isFinite(amount) || amount <= 0) return Alert.alert("Set a daily amount", "Use a positive MON allowance.");
+    if (!vaultAddress || !mockUsdcAddress) return Alert.alert("Contracts not configured", "Add the vault and mUSDC addresses to your app environment.");
+    const amount = Number(settings.dailyUsdc);
+    if (!Number.isFinite(amount) || amount <= 0) return Alert.alert("Set a daily amount", "Use a positive mUSDC allowance.");
     const startAt = Math.floor((dateStart() + 86_400_000) / 1_000);
-    const dailyAmount = toWei(settings.dailyMon);
+    const dailyAmount = toUnits(settings.dailyUsdc, 6);
+    const budget = dailyAmount * BigInt(settings.duration);
+    const usdc = getContract({ client, chain, address: mockUsdcAddress });
     const contract = getContract({ client, chain, address: vaultAddress });
-    const transaction = prepareContractCall({
+    const approve = prepareContractCall({
+      contract: usdc,
+      method: "function approve(address spender,uint256 amount) returns (bool)",
+      params: [vaultAddress, budget],
+    });
+    const create = prepareContractCall({
       contract,
-      method: "function createProgram(uint16 durationDays,uint32 dailyLimitSeconds,uint96 dailyAmount,address beneficiary,uint64 startAt) payable returns (uint256)",
+      method: "function createProgram(uint16 durationDays,uint32 dailyLimitSeconds,uint96 dailyAmount,address beneficiary,uint64 startAt) returns (uint256)",
       params: [settings.duration, Math.round(settings.targetHours * 3_600), dailyAmount, account.address, BigInt(startAt)],
-      value: dailyAmount * BigInt(settings.duration),
     });
     // thirdweb's React Native hook defaults to an ABI-less contract type;
     // the prepared transaction contains the concrete ABI method at runtime.
-    sendTransaction(transaction as never, {
+    sendTransaction(approve as never, {
       onSuccess: () => {
-        void saveSettings({ ...settings, startAt });
-        void refetchBalance();
-        Alert.alert("Your patch is planted", "The program begins tomorrow. Save its Program ID from the contract event in the Vault tab.");
-        setTab("vault");
+        sendTransaction(create as never, {
+          onSuccess: () => {
+            void saveSettings({ ...settings, startAt });
+            void refetchBalance();
+            Alert.alert("Your patch is planted", "Your mUSDC is locked; MON only paid the two transaction fees. Save the Program ID from the contract event in the Vault tab.");
+            setTab("vault");
+          },
+          onError: (error) => Alert.alert("Approval complete, vault failed", error.message),
+        });
       },
-      onError: (error) => Alert.alert("Could not create vault", error.message),
+      onError: (error) => Alert.alert("Could not approve mUSDC", error.message),
+    });
+  };
+
+  const mintMockUsdc = () => {
+    if (!mockUsdcAddress) return Alert.alert("mUSDC not configured", "Add EXPO_PUBLIC_MOCK_USDC_ADDRESS after deployment.");
+    const usdc = getContract({ client, chain, address: mockUsdcAddress });
+    const transaction = prepareContractCall({ contract: usdc, method: "function mint()" });
+    sendTransaction(transaction as never, {
+      onSuccess: () => Alert.alert("1,000 mUSDC minted", "This is a test token for your TouchGrass budget."),
+      onError: (error) => Alert.alert("Could not mint mUSDC", error.message),
     });
   };
 
@@ -179,7 +200,7 @@ export default function TouchGrass() {
       params: [BigInt(settings.programId)],
     });
     sendTransaction(transaction as never, {
-      onSuccess: () => { void refetchBalance(); Alert.alert("Savings released", "Your matured locked MON returned to your wallet."); },
+      onSuccess: () => { void refetchBalance(); Alert.alert("Savings released", "Your matured locked mUSDC returned to your wallet."); },
       onError: (error) => Alert.alert("Savings still locked", error.message),
     });
   };
@@ -224,7 +245,7 @@ export default function TouchGrass() {
         params: [BigInt(settings.programId), result.voucher.dayIndex, BigInt(result.voucher.validUntil), result.voucher.signature],
       });
       sendTransaction(transaction as never, {
-        onSuccess: () => { void refetchBalance(); Alert.alert("A little MON is free", "Your successful day is now recorded on Monad."); },
+        onSuccess: () => { void refetchBalance(); Alert.alert("mUSDC released", "Your successful day is now recorded on Monad."); },
         onError: (error) => Alert.alert("Voucher received, claim failed", error.message),
       });
     } catch (error) {
@@ -249,7 +270,7 @@ export default function TouchGrass() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={settings} onRefresh={refreshUsage} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} onCheckIn={checkInYesterday} checkingIn={isCheckingIn} />}
-        {tab === "setup" && <Setup settings={settings} onChange={(next) => void saveSettings(next)} onCreate={createProgram} pending={isPending} />}
+        {tab === "setup" && <Setup settings={settings} onChange={(next) => void saveSettings(next)} onCreate={createProgram} onMint={mintMockUsdc} pending={isPending} />}
         {tab === "vault" && <Vault balance={balance?.displayValue} settings={settings} onChange={(next) => void saveSettings(next)} onWithdraw={withdrawSavings} pending={isPending} />}
         {tab === "insights" && <Insights usageSeconds={usageSeconds} targetSeconds={allowedSeconds} />}
       </ScrollView>
@@ -271,7 +292,7 @@ function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, setti
     <View style={styles.hero}>
       <Image source={require("@/assets/images/grass.png")} style={styles.grass} resizeMode="contain" />
       <Text style={styles.heroTitle}>{aboveTarget ? "Come back\ntomorrow." : "Keep your day\nwide open."}</Text>
-      <Text style={styles.heroCopy}>{aboveTarget ? "Today’s allowance is safe in savings." : "A small amount of MON unlocks when your day closes under target."}</Text>
+      <Text style={styles.heroCopy}>{aboveTarget ? "Today’s allowance is safe in savings." : "A small mUSDC allowance unlocks when your day closes under target."}</Text>
     </View>
     <View style={styles.timeCard}>
       <Text style={styles.monoLabel}>{hasUsageAccess ? "TRACKED APP TIME" : "USAGE ACCESS NEEDED"}</Text>
@@ -280,19 +301,20 @@ function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, setti
       <View style={styles.timeFooter}><Text style={styles.small}>{hasUsageAccess ? `${formatMinutes(remainingSeconds)} left before your ${settings.targetHours}h limit` : "Give TouchGrass permission to read Android app-use time."}</Text><Pressable onPress={hasUsageAccess ? onRefresh : onRequestAccess}><Text style={styles.link}>{hasUsageAccess ? "Refresh" : "Allow"}</Text></Pressable></View>
     </View>
     <View style={styles.rule} />
-    <View style={styles.releaseRow}><View><Text style={styles.eyebrow}>NEXT DAILY RELEASE</Text><Text style={styles.release}>{settings.dailyMon} MON</Text><Text style={styles.small}>Locked until your day closes</Text></View><Pressable style={styles.outlineButton} onPress={onSetup}><Text style={styles.outlineText}>Edit plan</Text></Pressable></View>
+    <View style={styles.releaseRow}><View><Text style={styles.eyebrow}>NEXT DAILY RELEASE</Text><Text style={styles.release}>{settings.dailyUsdc} mUSDC</Text><Text style={styles.small}>Locked until your day closes</Text></View><Pressable style={styles.outlineButton} onPress={onSetup}><Text style={styles.outlineText}>Edit plan</Text></Pressable></View>
     <Pressable style={styles.primaryButton} onPress={onCheckIn} disabled={checkingIn}><Text style={styles.primaryText}>{checkingIn ? "Checking yesterday…" : "Check in yesterday"}</Text></Pressable>
     <Text style={styles.disclaimer}>TouchGrass is a voluntary commitment tool. Your app-use total stays on your device; only an aggregate result is sent when you check in.</Text>
   </>;
 }
 
-function Setup({ settings, onChange, onCreate, pending }: { settings: ProgramSettings; onChange: (next: ProgramSettings) => void; onCreate: () => void; pending: boolean }) {
+function Setup({ settings, onChange, onCreate, onMint, pending }: { settings: ProgramSettings; onChange: (next: ProgramSettings) => void; onCreate: () => void; onMint: () => void; pending: boolean }) {
   return <>
     <Text style={styles.pageTitle}>Plant a limit.</Text><Text style={styles.pageCopy}>Lock a small budget. Make it available only on days you made space for the real world.</Text>
     <Text style={styles.eyebrow}>PROGRAM LENGTH</Text><View style={styles.segment}>{([7, 14, 28] as const).map((days) => <Pressable key={days} style={[styles.segmentOption, settings.duration === days && styles.segmentActive]} onPress={() => onChange({ ...settings, duration: days })}><Text style={[styles.segmentText, settings.duration === days && styles.segmentTextActive]}>{days} days</Text></Pressable>)}</View>
     <Text style={styles.eyebrow}>DAILY APP-USE LIMIT</Text><View style={styles.stepper}><Pressable onPress={() => onChange({ ...settings, targetHours: Math.max(1, settings.targetHours - 1) })}><Ionicons name="remove" size={21} color={ink} /></Pressable><Text style={styles.stepperValue}>{settings.targetHours}<Text style={styles.stepperUnit}> hours</Text></Text><Pressable onPress={() => onChange({ ...settings, targetHours: Math.min(8, settings.targetHours + 1) })}><Ionicons name="add" size={21} color={ink} /></Pressable></View>
-    <Text style={styles.eyebrow}>DAILY MON RELEASE</Text><View style={styles.inputShell}><TextInput style={styles.input} value={settings.dailyMon} onChangeText={(dailyMon) => onChange({ ...settings, dailyMon })} keyboardType="decimal-pad" /><Text style={styles.mono}>MON</Text></View>
-    <View style={styles.totalCard}><Text style={styles.small}>YOU’LL LOCK</Text><Text style={styles.total}>{(Number(settings.dailyMon || 0) * settings.duration).toFixed(3)} MON</Text><Text style={styles.small}>Unused daily releases return after a 7-day cooldown.</Text></View>
+    <Text style={styles.eyebrow}>DAILY mUSDC RELEASE</Text><View style={styles.inputShell}><TextInput style={styles.input} value={settings.dailyUsdc} onChangeText={(dailyUsdc) => onChange({ ...settings, dailyUsdc })} keyboardType="decimal-pad" /><Text style={styles.mono}>mUSDC</Text></View>
+    <View style={styles.totalCard}><Text style={styles.small}>YOU’LL LOCK</Text><Text style={styles.total}>{(Number(settings.dailyUsdc || 0) * settings.duration).toFixed(2)} mUSDC</Text><Text style={styles.small}>Unused daily releases return after a 7-day cooldown. MON pays only gas.</Text></View>
+    <Pressable style={styles.outlineFullButton} onPress={onMint} disabled={pending}><Text style={styles.outlineText}>Mint 1,000 demo mUSDC</Text></Pressable>
     <Pressable style={styles.primaryButton} onPress={onCreate} disabled={pending}><Text style={styles.primaryText}>{pending ? "Planting your patch…" : "Lock this plan"}</Text></Pressable>
   </>;
 }
@@ -300,9 +322,9 @@ function Setup({ settings, onChange, onCreate, pending }: { settings: ProgramSet
 function Vault({ balance, settings, onChange, onWithdraw, pending }: { balance?: string; settings: ProgramSettings; onChange: (next: ProgramSettings) => void; onWithdraw: () => void; pending: boolean }) {
   return <>
     <Text style={styles.pageTitle}>Your vault.</Text><Text style={styles.pageCopy}>The contract holds only what you choose to lock. TouchGrass cannot see or move other wallet funds.</Text>
-    <View style={styles.balanceCard}><Text style={styles.monoLabel}>WALLET BALANCE</Text><Text style={styles.balance}>{balance ?? "—"}<Text style={styles.balanceUnit}> MON</Text></Text><Text style={styles.small}>Monad Testnet · Chain 10143</Text></View>
+    <View style={styles.balanceCard}><Text style={styles.monoLabel}>MON GAS BALANCE</Text><Text style={styles.balance}>{balance ?? "—"}<Text style={styles.balanceUnit}> MON</Text></Text><Text style={styles.small}>Your locked allowance is mUSDC · Monad Testnet</Text></View>
     <Text style={styles.eyebrow}>PROGRAM ID</Text><View style={styles.inputShell}><TextInput style={styles.input} value={settings.programId} onChangeText={(programId) => onChange({ ...settings, programId: programId.replace(/\D/g, "") })} placeholder="From ProgramCreated event" placeholderTextColor="#9F978A" keyboardType="number-pad" /><Ionicons name="receipt-outline" size={20} color={ink} /></View>
-    <View style={styles.notice}><Ionicons name="information-circle-outline" size={19} color={moss} /><Text style={styles.noticeText}>After your program and its 7-day cooldown finish, any unreleased MON can return to your wallet.</Text></View>
+    <View style={styles.notice}><Ionicons name="information-circle-outline" size={19} color={moss} /><Text style={styles.noticeText}>After your program and its 7-day cooldown finish, any unreleased mUSDC can return to your wallet. MON is never locked.</Text></View>
     <Pressable style={styles.outlineFullButton} onPress={onWithdraw} disabled={pending}><Text style={styles.outlineText}>{pending ? "Checking vault…" : "Withdraw matured savings"}</Text></Pressable>
     <Pressable onPress={() => Linking.openURL("https://faucet.monad.xyz")}><Text style={[styles.link, { marginTop: 22, textAlign: "center" }]}>Get testnet MON ↗</Text></Pressable>
   </>;

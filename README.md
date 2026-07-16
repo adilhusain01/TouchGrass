@@ -1,13 +1,13 @@
 # TouchGrass
 
-TouchGrass is an Android-first commitment vault for people who want less phone time and less impulsive spending. Lock testnet MON; when a completed day stays below your app-use target, a verifier issues a voucher and the vault releases that day’s allowance. Missed allowances stay locked as savings until the program ends and its cooldown passes.
+TouchGrass is an Android-first commitment vault for people who want less phone time and less impulsive spending. Lock mock USDC; when a completed day stays below your app-use target, a verifier issues a voucher and the vault releases that day’s allowance. MON pays only network gas. Missed allowances stay locked as savings until the program ends and its cooldown passes.
 
 > Testnet only. MON on Monad Testnet has no monetary value. TouchGrass is a voluntary self-accountability tool, not a trustless proof of screen time.
 
 ## What is included
 
 - `apps/mobile` — Expo / React Native Android app, generated from Monad’s Expo + thirdweb starter and redesigned for TouchGrass.
-- `contracts` — Foundry + OpenZeppelin `AllowanceVault`, which custody-locks native MON and verifies EIP-712 daily claim vouchers.
+- `contracts` — Foundry + OpenZeppelin `AllowanceVault` and a 6-decimal `mUSDC` faucet token. The vault custody-locks mUSDC and verifies EIP-712 daily claim vouchers.
 - `apps/verifier` — Hono Cloudflare Worker with D1 persistence. It stores only aggregate daily seconds, program metadata, and issued-voucher state.
 
 ## Run it locally
@@ -27,8 +27,10 @@ forge script script/DeployAllowanceVault.s.sol:DeployAllowanceVault \
 
 The deployer key belongs only in an ignored `.env`. Never place a private key in Git, app code, a Worker variable, or an `EXPO_PUBLIC_*` value.
 
-Deployed Monad Testnet vault: [`0x951F…75ba`](https://testnet.monadscan.com/address/0x951F2e74FA66Bec48d8Bd5481C6B95D8147f75ba)
-([deployment transaction](https://testnet.monadscan.com/tx/0x53b20e487b354e6e9b7a5aed7c6b6d697847fa87999455c66dc0255e2173e2e3)).
+Active Monad Testnet contracts:
+
+- [`mUSDC faucet`](https://testnet.monadscan.com/address/0x59E68C80762c7eC8F1172eD893b32947dacf9Ad1) — 6 decimals; anyone can mint 1,000 test mUSDC.
+- [`AllowanceVault`](https://testnet.monadscan.com/address/0xDA77bf9f41Cc3dFF4f966a1Fa2438CC3a5BBbe4C) ([deployment transaction](https://testnet.monadscan.com/tx/0x2dad894d59b1de6502ae482a98f03df3c8e77d9284c51d9ed5fbd808741c063e)).
 
 ### 2. Verifier
 
@@ -71,8 +73,8 @@ cd ../mobile && pnpm exec tsc --noEmit && pnpm exec expo lint
 
 ## Demo sequence
 
-1. Create an embedded wallet and request testnet MON from the Monad faucet.
-2. Choose a 7/14/28-day plan, app-use target, and daily MON release.
+1. Create an embedded wallet, request a little testnet MON for gas, then mint demo mUSDC.
+2. Choose a 7/14/28-day plan, app-use target, and daily mUSDC release.
 3. Create the vault on Monad Testnet; show the `ProgramCreated` event in the explorer.
 4. After a successful day, submit the verifier voucher and show the claim transaction.
 5. Show that a missed day stays locked and that analytics remain local to the phone.

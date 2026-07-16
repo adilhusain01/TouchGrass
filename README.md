@@ -19,8 +19,10 @@ cd contracts
 forge test
 cp .env.example .env
 # Add MONAD_RPC_URL, DEPLOYER_PRIVATE_KEY, and the verifier wallet address locally.
+# The contract is currently optimized to cost roughly 0.11 MON to deploy at a 102 gwei gas price;
+# fund the disposable testnet deployer with at least 0.20 MON before broadcasting.
 forge script script/DeployAllowanceVault.s.sol:DeployAllowanceVault \
-  --rpc-url "$MONAD_RPC_URL" --broadcast --verify
+  --rpc-url "$MONAD_RPC_URL" --broadcast --skip-simulation
 ```
 
 The deployer key belongs only in an ignored `.env`. Never place a private key in Git, app code, a Worker variable, or an `EXPO_PUBLIC_*` value.
@@ -39,6 +41,9 @@ pnpm deploy
 ```
 
 Use a fresh verifier wallet. Its public address is the `VERIFIER_ADDRESS` used during contract deployment.
+The deployed endpoint is `https://touchgrass-verifier.touchgrass-adilhusain.workers.dev`; set it as
+`EXPO_PUBLIC_VERIFIER_URL` in the mobile app. The service is live but returns a configuration error
+for claims until the deployed vault address is installed as a Worker secret.
 
 ### 3. Android app
 

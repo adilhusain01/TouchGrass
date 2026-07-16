@@ -25,7 +25,7 @@
     {
       "binding": "DB",
       "database_name": "touchgrass-verifier",
-      "database_id": "REPLACE_WITH_WRANGLER_D1_CREATE_OUTPUT"
+      "database_id": "86e9d2e6-50dd-4550-b5e7-ad78b9a4c719"
     }
   ],
   // "ai": {

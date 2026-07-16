@@ -51,7 +51,9 @@ const vaultAbi = [
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.use("/v1/*", cors({ origin: "*" }));
+app.use("/v1/*", async (c, next) => {
+  return cors({ origin: c.env.ALLOWED_ORIGIN || "*" })(c, next);
+});
 
 app.get("/", (c) => c.json({ name: "TouchGrass verifier", chainId: CHAIN_ID, status: "ok" }));
 

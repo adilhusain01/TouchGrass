@@ -1,0 +1,13 @@
+diff --git a/android/generated/jni/CMakeLists.txt b/android/generated/jni/CMakeLists.txt
+index 0c27f37ed7a0214a72673d12565b519bf2d1be5f..f77d9c9fd84621f1df493aa23ec89f4feaaedc3b 100644
+--- a/android/generated/jni/CMakeLists.txt
++++ b/android/generated/jni/CMakeLists.txt
+@@ -25,4 +25,7 @@ target_link_libraries(
+   reactnative
+ )
+ 
+-target_compile_reactnative_options(react_codegen_QuickBase64Spec PRIVATE)
++# RN 0.80 introduced this helper; Expo SDK 53 uses RN 0.79.
++if(COMMAND target_compile_reactnative_options)
++  target_compile_reactnative_options(react_codegen_QuickBase64Spec PRIVATE)
++endif()

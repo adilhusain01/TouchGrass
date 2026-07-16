@@ -84,8 +84,8 @@ cd apps/mobile
 pnpm install
 cp .env.example .env
 # Set EXPO_PUBLIC_THIRDWEB_CLIENT_ID in .env
-pnpm exec expo prebuild --platform android
-pnpm exec expo run:android
+EXPO_USE_COMMUNITY_AUTOLINKING=1 pnpm exec expo prebuild --platform android
+EXPO_USE_COMMUNITY_AUTOLINKING=1 pnpm exec expo run:android
 ```
 
 TouchGrass uses Android `UsageStatsManager`, so it will not run in Expo Go. Enable Usage Access for TouchGrass on first launch.

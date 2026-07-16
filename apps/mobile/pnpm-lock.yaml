@@ -7,6 +7,11 @@ settings:
 overrides:
   react-server-dom-webpack: 19.0.3
 
+patchedDependencies:
+  react-native-quick-base64@3.0.1:
+    hash: 5acb8856270b70e5093aaa17622efaa17f084587bef8026f3b3d97cd33ae10e6
+    path: patches/react-native-quick-base64@3.0.1.patch
+
 importers:
 
   .:
@@ -103,7 +108,7 @@ importers:
         version: 3.5.0(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
       react-native-quick-base64:
         specifier: 3.0.1
-        version: 3.0.1(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
+        version: 3.0.1(patch_hash=5acb8856270b70e5093aaa17622efaa17f084587bef8026f3b3d97cd33ae10e6)(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
       react-native-quick-crypto:
         specifier: 0.7.13
         version: 0.7.13(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
@@ -8361,7 +8366,7 @@ snapshots:
   '@craftzdog/react-native-buffer@6.1.2(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)':
     dependencies:
       ieee754: 1.2.1
-      react-native-quick-base64: 3.0.1(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
+      react-native-quick-base64: 3.0.1(patch_hash=5acb8856270b70e5093aaa17622efaa17f084587bef8026f3b3d97cd33ae10e6)(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
     transitivePeerDependencies:
       - react
       - react-native
@@ -14859,7 +14864,7 @@ snapshots:
       react: 19.0.0
       react-native: 0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0)
 
-  react-native-quick-base64@3.0.1(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0):
+  react-native-quick-base64@3.0.1(patch_hash=5acb8856270b70e5093aaa17622efaa17f084587bef8026f3b3d97cd33ae10e6)(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0):
     dependencies:
       react: 19.0.0
       react-native: 0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0)

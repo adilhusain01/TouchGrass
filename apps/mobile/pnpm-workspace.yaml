@@ -1,0 +1,2 @@
+patchedDependencies:
+  react-native-quick-base64@3.0.1: patches/react-native-quick-base64@3.0.1.patch

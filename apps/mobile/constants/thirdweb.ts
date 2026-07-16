@@ -5,7 +5,7 @@ export const chain = defineChain({
   name: "Monad Testnet",
   nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
   rpc: "https://monad-testnet.drpc.org",
-  blockExplorers: [{ name: "Monad Explorer", url: "https://testnet.monadvision.com" }],
+  blockExplorers: [{ name: "MonadScan", url: "https://testnet.monadscan.com" }],
 });
 
 export const getClient = () =>

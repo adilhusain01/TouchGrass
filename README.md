@@ -27,6 +27,9 @@ forge script script/DeployAllowanceVault.s.sol:DeployAllowanceVault \
 
 The deployer key belongs only in an ignored `.env`. Never place a private key in Git, app code, a Worker variable, or an `EXPO_PUBLIC_*` value.
 
+Deployed Monad Testnet vault: [`0x951F…75ba`](https://testnet.monadscan.com/address/0x951F2e74FA66Bec48d8Bd5481C6B95D8147f75ba)
+([deployment transaction](https://testnet.monadscan.com/tx/0x53b20e487b354e6e9b7a5aed7c6b6d697847fa87999455c66dc0255e2173e2e3)).
+
 ### 2. Verifier
 
 ```sh
@@ -42,8 +45,8 @@ pnpm deploy
 
 Use a fresh verifier wallet. Its public address is the `VERIFIER_ADDRESS` used during contract deployment.
 The deployed endpoint is `https://touchgrass-verifier.touchgrass-adilhusain.workers.dev`; set it as
-`EXPO_PUBLIC_VERIFIER_URL` in the mobile app. The service is live but returns a configuration error
-for claims until the deployed vault address is installed as a Worker secret.
+`EXPO_PUBLIC_VERIFIER_URL` in the mobile app. The service is live and configured against the
+deployed vault.
 
 ### 3. Android app
 

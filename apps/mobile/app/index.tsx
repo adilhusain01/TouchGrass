@@ -23,7 +23,7 @@ import {
 import { inAppWallet } from "thirdweb/wallets";
 import { getContract, prepareContractCall, toWei } from "thirdweb";
 
-import { chain, getClient, vaultAddress } from "@/constants/thirdweb";
+import { chain, getClient, vaultAddress, verifierUrl } from "@/constants/thirdweb";
 
 type Tab = "today" | "setup" | "vault" | "insights";
 type ProgramSettings = {
@@ -31,9 +31,11 @@ type ProgramSettings = {
   targetHours: number;
   dailyMon: string;
   programId: string;
+  startAt?: number;
 };
 
 const SETTINGS_KEY = "touchgrass.settings.v1";
+const INSTALLATION_KEY = "touchgrass.installation-id.v1";
 const ink = "#17140E";
 const paper = "#F4EEDF";
 const line = "#D4CCBC";
@@ -57,13 +59,17 @@ function truncate(address?: string) {
 }
 
 async function readTodayUsage(): Promise<number | null> {
+  return readUsageFor(dateStart(), Date.now());
+}
+
+async function readUsageFor(startTime: number, endTime: number): Promise<number | null> {
   if (Platform.OS !== "android") return null;
   // The package only exists in Android development builds, never in Expo Go.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const module = require("@antardev/react-native-usage-stats");
   const usageStats = module.default ?? module;
   if (!usageStats.isPermissionGranted()) return null;
-  const entries = await usageStats.queryUsageStats({ startTime: dateStart(), endTime: Date.now(), interval: "daily" });
+  const entries = await usageStats.queryUsageStats({ startTime, endTime, interval: "daily" });
   if (!Array.isArray(entries)) return 0;
   const totalMs = entries.reduce((sum: number, entry: Record<string, unknown>) => {
     const packageName = String(entry.packageName ?? entry.package ?? "");
@@ -74,6 +80,14 @@ async function readTodayUsage(): Promise<number | null> {
   return Math.round(totalMs / 1_000);
 }
 
+async function installationId() {
+  const existing = await AsyncStorage.getItem(INSTALLATION_KEY);
+  if (existing) return existing;
+  const created = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  await AsyncStorage.setItem(INSTALLATION_KEY, created);
+  return created;
+}
+
 export default function TouchGrass() {
   const account = useActiveAccount();
   const { mutate: sendTransaction, isPending } = useSendTransaction();
@@ -82,6 +96,7 @@ export default function TouchGrass() {
   const [hasUsageAccess, setHasUsageAccess] = useState(false);
   const [settings, setSettings] = useState<ProgramSettings>(defaultSettings);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
 
   const { data: balance, refetch: refetchBalance } = useWalletBalance({
     client,
@@ -146,6 +161,7 @@ export default function TouchGrass() {
     // the prepared transaction contains the concrete ABI method at runtime.
     sendTransaction(transaction as never, {
       onSuccess: () => {
+        void saveSettings({ ...settings, startAt });
         void refetchBalance();
         Alert.alert("Your patch is planted", "The program begins tomorrow. Save its Program ID from the contract event in the Vault tab.");
         setTab("vault");
@@ -168,6 +184,56 @@ export default function TouchGrass() {
     });
   };
 
+  const checkInYesterday = async () => {
+    if (!account || !vaultAddress || !verifierUrl || !settings.programId || !settings.startAt) {
+      return Alert.alert("Finish your setup", "Connect a wallet, deploy the vault, add its Program ID, and set the verifier URL first.");
+    }
+    if (!hasUsageAccess) return requestUsageAccess();
+    setIsCheckingIn(true);
+    try {
+      const deviceId = await installationId();
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const registrationMessage = `TouchGrass program registration\nprogram: ${settings.programId}\nwallet: ${account.address.toLowerCase()}\ntimezone: ${timezone}\ndevice: ${deviceId}`;
+      const registrationSignature = await account.signMessage({ message: registrationMessage });
+      const registration = await fetch(`${verifierUrl.replace(/\/$/, "")}/v1/programs/register`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ programId: settings.programId, wallet: account.address, timezone, installationId: deviceId, walletSignature: registrationSignature }),
+      });
+      if (!registration.ok) throw new Error((await registration.json().catch(() => ({}))).error ?? "Could not register the program");
+
+      const periodEnd = dateStart();
+      const periodStart = periodEnd - 86_400_000;
+      const dayIndex = Math.floor((periodStart - settings.startAt * 1_000) / 86_400_000);
+      if (dayIndex < 0) throw new Error("Your first program day has not closed yet.");
+      const yesterday = await readUsageFor(periodStart, periodEnd);
+      if (yesterday === null) throw new Error("Usage Access is not available.");
+      const message = `TouchGrass daily check-in\nprogram: ${settings.programId}\nwallet: ${account.address.toLowerCase()}\nday: ${dayIndex}\nusageSeconds: ${yesterday}\nperiodStart: ${periodStart}\nperiodEnd: ${periodEnd}\ndevice: ${deviceId}`;
+      const walletSignature = await account.signMessage({ message });
+      const response = await fetch(`${verifierUrl.replace(/\/$/, "")}/v1/verify-day`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ programId: settings.programId, wallet: account.address, dayIndex, usageSeconds: yesterday, periodStart, periodEnd, installationId: deviceId, walletSignature }),
+      });
+      const result = await response.json() as { eligible?: boolean; reason?: string; error?: string; voucher?: { dayIndex: number; validUntil: number; signature: `0x${string}` } };
+      if (!response.ok) throw new Error(result.error ?? "Verification failed");
+      if (!result.eligible || !result.voucher) return Alert.alert("Allowance held", result.reason ?? "Your allowance stays in savings today.");
+
+      const contract = getContract({ client, chain, address: vaultAddress });
+      const transaction = prepareContractCall({
+        contract,
+        method: "function claim(uint256 programId,uint16 dayIndex,uint64 validUntil,bytes signature)",
+        params: [BigInt(settings.programId), result.voucher.dayIndex, BigInt(result.voucher.validUntil), result.voucher.signature],
+      });
+      sendTransaction(transaction as never, {
+        onSuccess: () => { void refetchBalance(); Alert.alert("A little MON is free", "Your successful day is now recorded on Monad."); },
+        onError: (error) => Alert.alert("Voucher received, claim failed", error.message),
+      });
+    } catch (error) {
+      Alert.alert("Check-in unavailable", error instanceof Error ? error.message : "Please try again when you are online.");
+    } finally {
+      setIsCheckingIn(false);
+    }
+  };
+
   const allowedSeconds = settings.targetHours * 3_600;
   const progress = Math.min(usageSeconds / allowedSeconds, 1);
   const remainingSeconds = Math.max(allowedSeconds - usageSeconds, 0);
@@ -182,7 +248,7 @@ export default function TouchGrass() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={settings} onRefresh={refreshUsage} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} />}
+        {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={settings} onRefresh={refreshUsage} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} onCheckIn={checkInYesterday} checkingIn={isCheckingIn} />}
         {tab === "setup" && <Setup settings={settings} onChange={(next) => void saveSettings(next)} onCreate={createProgram} pending={isPending} />}
         {tab === "vault" && <Vault balance={balance?.displayValue} settings={settings} onChange={(next) => void saveSettings(next)} onWithdraw={withdrawSavings} pending={isPending} />}
         {tab === "insights" && <Insights usageSeconds={usageSeconds} targetSeconds={allowedSeconds} />}
@@ -198,7 +264,7 @@ export default function TouchGrass() {
   );
 }
 
-function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, settings, onRefresh, onRequestAccess, onSetup }: { usageSeconds: number; hasUsageAccess: boolean; progress: number; remainingSeconds: number; settings: ProgramSettings; onRefresh: () => void; onRequestAccess: () => void; onSetup: () => void }) {
+function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, settings, onRefresh, onRequestAccess, onSetup, onCheckIn, checkingIn }: { usageSeconds: number; hasUsageAccess: boolean; progress: number; remainingSeconds: number; settings: ProgramSettings; onRefresh: () => void; onRequestAccess: () => void; onSetup: () => void; onCheckIn: () => void; checkingIn: boolean }) {
   const aboveTarget = progress >= 1;
   return <>
     <View style={styles.eyebrowRow}><Text style={styles.eyebrow}>TODAY’S PATCH</Text><Text style={styles.mono}>{new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" }).toUpperCase()}</Text></View>
@@ -215,6 +281,7 @@ function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, setti
     </View>
     <View style={styles.rule} />
     <View style={styles.releaseRow}><View><Text style={styles.eyebrow}>NEXT DAILY RELEASE</Text><Text style={styles.release}>{settings.dailyMon} MON</Text><Text style={styles.small}>Locked until your day closes</Text></View><Pressable style={styles.outlineButton} onPress={onSetup}><Text style={styles.outlineText}>Edit plan</Text></Pressable></View>
+    <Pressable style={styles.primaryButton} onPress={onCheckIn} disabled={checkingIn}><Text style={styles.primaryText}>{checkingIn ? "Checking yesterday…" : "Check in yesterday"}</Text></Pressable>
     <Text style={styles.disclaimer}>TouchGrass is a voluntary commitment tool. Your app-use total stays on your device; only an aggregate result is sent when you check in.</Text>
   </>;
 }

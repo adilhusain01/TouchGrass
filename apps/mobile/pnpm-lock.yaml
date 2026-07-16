@@ -101,6 +101,9 @@ importers:
       react-native-passkey:
         specifier: ^3.0.0
         version: 3.5.0(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
+      react-native-quick-base64:
+        specifier: 3.0.1
+        version: 3.0.1(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)
       react-native-quick-crypto:
         specifier: 0.7.13
         version: 0.7.13(react-native@0.79.6(@babel/core@7.29.7)(@react-native-community/cli@18.0.1(typescript@5.8.3))(@types/react@19.0.14)(react@19.0.0))(react@19.0.0)

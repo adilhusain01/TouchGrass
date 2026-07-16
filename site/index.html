@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f4eedf" />
+    <meta name="description" content="TouchGrass turns a screen-time intention into a daily mUSDC commitment on Monad." />
+    <title>TouchGrass — Make less screen time feel real.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=DM+Mono&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root { --ink:#17140e; --paper:#f4eedf; --muted:#716a5f; --line:#d4ccbc; --moss:#56734b; --lime:#b7d46c; --night:#1c2419; }
+      * { box-sizing:border-box; }
+      html { scroll-behavior:smooth; }
+      body { margin:0; color:var(--ink); background:var(--paper); font-family:Manrope, sans-serif; }
+      a { color:inherit; text-decoration:none; }
+      .page { overflow:hidden; }
+      .shell { width:min(1180px, calc(100% - 40px)); margin:auto; }
+      .eyebrow { font:10px/1.2 "DM Mono", monospace; letter-spacing:.16em; color:var(--muted); text-transform:uppercase; }
+      .nav { height:76px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }
+      .brand { display:flex; align-items:center; gap:10px; font:700 29px/1 "Cormorant Garamond", serif; letter-spacing:-.04em; }
+      .seed { width:17px; height:23px; border-radius:100% 0 100% 100%; background:var(--ink); transform:rotate(-28deg); }
+      .nav-links { display:flex; align-items:center; gap:24px; font-size:12px; font-weight:700; }
+      .nav-links a:not(.nav-cta) { color:#5d564b; }
+      .nav-cta { background:var(--ink); color:#fffdf7; padding:11px 16px; border-radius:99px; }
+      .hero { min-height:650px; display:grid; grid-template-columns:1.1fr .9fr; align-items:center; gap:34px; position:relative; }
+      .hero-copy { padding:68px 0 80px; position:relative; z-index:1; }
+      h1 { margin:16px 0 20px; font:600 clamp(4rem, 8vw, 7.8rem)/.79 "Cormorant Garamond", serif; letter-spacing:-.07em; max-width:720px; }
+      h1 em { font-weight:500; color:var(--moss); }
+      .lede { max-width:520px; color:var(--muted); font-size:17px; line-height:1.65; }
+      .actions { display:flex; flex-wrap:wrap; gap:11px; margin-top:31px; }
+      .button { min-height:52px; padding:0 21px; display:inline-flex; align-items:center; justify-content:center; border-radius:14px; font-size:14px; font-weight:700; transition:transform .2s, background .2s; }
+      .button:hover { transform:translateY(-2px); }
+      .primary { background:var(--ink); color:#fffdf7; box-shadow:5px 5px 0 #c7beaa; }
+      .secondary { border:1px solid var(--ink); }
+      .fine { margin:17px 0 0; color:#8b8274; font-size:11px; }
+      .art { height:470px; position:relative; display:grid; place-items:center; }
+      .eclipse { position:absolute; width:min(39vw,460px); aspect-ratio:1; border-radius:50%; background:radial-gradient(circle at 29% 50%, #e4daca 0 14%, #6c8061 29%, #1b2318 68%); box-shadow:0 22px 55px #88806f55; }
+      .eclipse::after { content:""; position:absolute; inset:-15%; background:radial-gradient(ellipse at 42% 46%, transparent 48%, #f4eedf 68%); }
+      .grass { position:relative; z-index:1; width:min(390px, 90%); mix-blend-mode:multiply; filter:saturate(.92) contrast(1.08); transform:translateY(20px); }
+      .ticker { border-top:1px solid var(--line); border-bottom:1px solid var(--line); display:flex; overflow:hidden; white-space:nowrap; }
+      .ticker span { padding:15px 30px; font:11px "DM Mono", monospace; letter-spacing:.1em; color:#554e43; }
+      .ticker b { color:var(--moss); margin-right:30px; }
+      section { padding:112px 0; }
+      .problem { display:grid; grid-template-columns:.85fr 1.15fr; gap:72px; }
+      h2 { margin:14px 0 0; font:600 clamp(2.8rem,5vw,5rem)/.88 "Cormorant Garamond", serif; letter-spacing:-.06em; }
+      .statement { margin:0; font:500 clamp(1.55rem,2.6vw,2.45rem)/1.2 "Cormorant Garamond", serif; max-width:710px; }
+      .body-copy { max-width:620px; margin-top:25px; color:var(--muted); line-height:1.75; font-size:15px; }
+      .dark { background:var(--night); color:#f5efdf; }
+      .dark .eyebrow { color:#b6bda5; }
+      .how { display:grid; grid-template-columns:.8fr 1.2fr; gap:62px; }
+      .how h2 { color:#f5efdf; }
+      .steps { border-top:1px solid #5b6556; }
+      .step { display:grid; grid-template-columns:48px 1fr; gap:18px; padding:25px 0; border-bottom:1px solid #5b6556; }
+      .number { color:var(--lime); font:12px "DM Mono", monospace; padding-top:4px; }
+      .step h3 { margin:0; font:600 26px/1 "Cormorant Garamond", serif; letter-spacing:-.03em; }
+      .step p { margin:7px 0 0; color:#c5cbbb; font-size:13px; line-height:1.6; }
+      .proof { padding:80px 0; }
+      .proof-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); }
+      .proof-card { min-height:230px; background:var(--paper); padding:26px; display:flex; flex-direction:column; justify-content:space-between; }
+      .proof-card strong { font:600 32px/1 "Cormorant Garamond", serif; letter-spacing:-.04em; }
+      .proof-card p { margin:0; color:var(--muted); font-size:13px; line-height:1.6; }
+      .contracts { padding:28px 0 108px; }
+      .contract-list { border-top:1px solid var(--ink); }
+      .contract { padding:20px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:20px; }
+      .contract-name { font:600 24px/1 "Cormorant Garamond", serif; }
+      .contract-meta { color:var(--muted); font:11px "DM Mono", monospace; }
+      .contract a { text-decoration:underline; font-size:12px; font-weight:700; }
+      .final { border-top:1px solid var(--line); padding:100px 0 34px; text-align:center; }
+      .final h2 { max-width:720px; margin:17px auto 26px; }
+      footer { padding:25px 0; display:flex; justify-content:space-between; color:#837b6e; font:10px "DM Mono", monospace; }
+      @media (max-width:760px) { .shell { width:min(100% - 30px, 600px); } .nav-links a:not(.nav-cta) { display:none; } .hero,.problem,.how { grid-template-columns:1fr; gap:20px; } .hero { min-height:0; } .hero-copy { padding:54px 0 5px; } .art { height:315px; order:-1; } .eclipse { width:285px; } .grass { width:275px; } section { padding:78px 0; } .proof-grid { grid-template-columns:1fr; } .contract { align-items:flex-start; flex-direction:column; gap:9px; } footer { flex-direction:column; gap:10px; } }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="shell nav">
+        <a href="#top" class="brand" aria-label="TouchGrass home"><span class="seed"></span>TouchGrass</a>
+        <nav class="nav-links" aria-label="Primary navigation"><a href="#how">How it works</a><a href="#live">Live testnet</a><a class="nav-cta" href="https://github.com/adilhusain01/TouchGrass/releases/latest/download/TouchGrass.apk">Download APK ↗</a></nav>
+      </header>
+      <main id="top">
+        <div class="shell hero">
+          <div class="hero-copy"><div class="eyebrow">Screen time, but with stakes · Monad Testnet</div><h1>Make less screen time <em>feel real.</em></h1><p class="lede">Lock a small mUSDC budget. Keep your Android app-use time under your limit. Unlock one day of spending only after you made space for the day itself.</p><div class="actions"><a class="button primary" href="https://github.com/adilhusain01/TouchGrass/releases/latest/download/TouchGrass.apk">Download Android APK ↗</a><a class="button secondary" href="#how">See the loop ↓</a></div><p class="fine">Testnet only · mUSDC has no real value · MON pays gas</p></div>
+          <div class="art" aria-hidden="true"><div class="eclipse"></div><img class="grass" src="assets/grass.png" alt="" /></div>
+        </div>
+        <div class="ticker"><span><b>✳</b> LESS SCROLL</span><span><b>✳</b> MORE DAY</span><span><b>✳</b> SMALLER SPEND</span><span><b>✳</b> LESS SCROLL</span><span><b>✳</b> MORE DAY</span><span><b>✳</b> SMALLER SPEND</span></div>
+        <section class="shell problem"><div><div class="eyebrow">The problem</div><h2>The feed is designed to win.</h2></div><div><p class="statement">Hours disappear into a phone. Then the money that is easy to reach disappears too.</p><p class="body-copy">Screen-time limits usually ask for willpower in the exact moment attention is weakest. TouchGrass moves the decision upstream: choose a budget while you are clear-minded, then earn back access to a small daily allowance by protecting your time.</p></div></section>
+        <section class="dark" id="how"><div class="shell how"><div><div class="eyebrow">The daily commitment</div><h2>Not punishment.<br />A promise you can see.</h2></div><div class="steps"><article class="step"><div class="number">01</div><div><h3>Plant a budget</h3><p>Mint harmless demo mUSDC, choose a 7, 14, or 28-day program, and lock the whole allowance upfront.</p></div></article><article class="step"><div class="number">02</div><div><h3>Live your actual day</h3><p>Android aggregates foreground app time while excluding TouchGrass itself. Per-app activity never leaves the phone.</p></div></article><article class="step"><div class="number">03</div><div><h3>Claim what you earned</h3><p>After a successful completed day, a verifier signs a one-time voucher. The Monad vault releases that day’s mUSDC.</p></div></article><article class="step"><div class="number">04</div><div><h3>Let misses become savings</h3><p>Go over your limit? Nothing is burned. That day’s mUSDC remains locked until the program and cooldown end.</p></div></article></div></div></section>
+        <section class="shell proof"><div class="eyebrow">Built with intent</div><h2>A small system for a bigger habit.</h2><div class="proof-grid"><article class="proof-card"><strong>mUSDC<br />is the budget.</strong><p>Mock USDC is locked and released by the vault. It makes the reward understandable: your own money, one day at a time.</p></article><article class="proof-card"><strong>MON<br />is just gas.</strong><p>Monad is where the commitment lives. MON pays only the low-cost transaction fees, never the daily allowance.</p></article><article class="proof-card"><strong>Your time<br />stays yours.</strong><p>The verifier sees only a signed aggregate total for one completed day and prevents duplicate vouchers.</p></article></div></section>
+        <section class="shell contracts" id="live"><div class="eyebrow">Onchain, now</div><h2>Live on Monad Testnet.</h2><div class="contract-list"><div class="contract"><div><div class="contract-name">mUSDC faucet</div><div class="contract-meta">1,000 test mUSDC per mint · 6 decimals</div></div><a href="https://testnet.monadscan.com/address/0x59E68C80762c7eC8F1172eD893b32947dacf9Ad1">View contract ↗</a></div><div class="contract"><div><div class="contract-name">AllowanceVault</div><div class="contract-meta">EIP-712 vouchers · replay protection · 7-day cooldown</div></div><a href="https://testnet.monadscan.com/address/0xDA77bf9f41Cc3dFF4f966a1Fa2438CC3a5BBbe4C">View contract ↗</a></div><div class="contract"><div><div class="contract-name">Verification service</div><div class="contract-meta">Hono + Cloudflare Workers + D1</div></div><a href="https://touchgrass-verifier.touchgrass-adilhusain.workers.dev">Open API ↗</a></div></div></section>
+        <section class="shell final"><div class="eyebrow">Take your day back</div><h2>Touch grass first.<br />Spend later.</h2><a class="button primary" href="https://github.com/adilhusain01/TouchGrass/releases/latest/download/TouchGrass.apk">Get the Android APK ↗</a><p class="fine">The APK link activates when the release asset named <code>TouchGrass.apk</code> is uploaded.</p></section>
+      </main>
+      <footer class="shell"><span>TOUCHGRASS · ANDROID FIRST · TESTNET ONLY</span><a href="https://github.com/adilhusain01/TouchGrass">GitHub ↗</a></footer>
+    </div>
+  </body>
+</html>

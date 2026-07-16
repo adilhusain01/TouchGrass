@@ -72,6 +72,7 @@ The app’s `.env.example` already contains the live vault, mUSDC, and verifier 
 apps/mobile     Android-first Expo app, thirdweb embedded wallet, UsageStatsManager
 apps/verifier   Hono Cloudflare Worker, D1 replay protection, EIP-712 voucher signer
 contracts       Foundry contracts: AllowanceVault + MockUSDC, including accounting tests
+site            Static Vercel-ready landing page and APK-release download link
 ```
 
 ## Run locally

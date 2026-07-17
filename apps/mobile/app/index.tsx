@@ -101,11 +101,9 @@ async function readUsageFor(startTime: number, endTime: number): Promise<number 
 
   const eventType = module.UsageEventType;
   const screenSegments: [number, number][] = [];
-  const touchGrassSegments: [number, number][] = [];
   let interactive = false;
   let unlocked = false;
   let screenStartedAt: number | null = null;
-  let touchGrassStartedAt: number | null = null;
 
   const updateScreenSegment = (time: number) => {
     const active = interactive && unlocked;
@@ -122,21 +120,12 @@ async function readUsageFor(startTime: number, endTime: number): Promise<number 
     else if (event.eventType === eventType.SCREEN_NON_INTERACTIVE) interactive = false;
     else if (event.eventType === eventType.KEYGUARD_HIDDEN) unlocked = true;
     else if (event.eventType === eventType.KEYGUARD_SHOWN) unlocked = false;
-    else if (event.packageName === "com.adilhusain.touchgrass") {
-      if (event.eventType === eventType.ACTIVITY_RESUMED) touchGrassStartedAt = time;
-      if ((event.eventType === eventType.ACTIVITY_PAUSED || event.eventType === eventType.ACTIVITY_STOPPED) && touchGrassStartedAt !== null) {
-        touchGrassSegments.push([touchGrassStartedAt, time]);
-        touchGrassStartedAt = null;
-      }
-    }
     updateScreenSegment(time);
   }
   updateScreenSegment(endTime);
-  if (touchGrassStartedAt !== null) touchGrassSegments.push([touchGrassStartedAt, endTime]);
 
   const screenMs = screenSegments.reduce((total, [start, end]) => total + end - start, 0);
-  const touchGrassMs = touchGrassSegments.reduce((total, [appStart, appEnd]) => total + screenSegments.reduce((overlap, [screenStart, screenEnd]) => overlap + Math.max(0, Math.min(appEnd, screenEnd) - Math.max(appStart, screenStart)), 0), 0);
-  return Math.round(Math.max(0, screenMs - touchGrassMs) / 1_000);
+  return Math.round(screenMs / 1_000);
 }
 
 async function installationId() {
@@ -225,25 +214,32 @@ export default function TouchGrass() {
 
   const refreshWeekUsage = useCallback(async () => {
     const todayStart = dateStart();
+    const todayIndex = (new Date().getDay() + 6) % 7;
+    const weekStart = todayStart - todayIndex * 86_400_000;
     const values = await Promise.all(Array.from({ length: 7 }, async (_, index) => {
-      const start = todayStart - (6 - index) * 86_400_000;
-      const end = index === 6 ? Date.now() : start + 86_400_000;
+      if (index > todayIndex) return 0;
+      const start = weekStart + index * 86_400_000;
+      const end = index === todayIndex ? Date.now() : start + 86_400_000;
       return (await readUsageFor(start, end)) ?? 0;
     }));
     setWeekUsage(values);
   }, []);
 
+  const refreshAnalytics = useCallback(async () => {
+    await Promise.all([refreshUsage(), refreshWeekUsage()]);
+  }, [refreshUsage, refreshWeekUsage]);
+
   useEffect(() => { void refreshUsage(); }, [refreshUsage]);
   useEffect(() => { void refreshProgram(); }, [refreshProgram]);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void refreshUsage();
+      if (state === "active") void refreshAnalytics();
     });
     return () => subscription.remove();
-  }, [refreshUsage]);
+  }, [refreshAnalytics]);
   useEffect(() => {
-    if (tab === "insights" && hasUsageAccess) void refreshWeekUsage();
-  }, [hasUsageAccess, refreshWeekUsage, tab]);
+    if (tab === "insights" && hasUsageAccess) void refreshAnalytics();
+  }, [hasUsageAccess, refreshAnalytics, tab]);
 
   const copyWalletAddress = useCallback(async () => {
     if (!account?.address) return;
@@ -397,10 +393,10 @@ export default function TouchGrass() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={planSettings} program={program} planIsOpen={planIsOpen} onRefresh={refreshUsage} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} onCheckIn={checkInYesterday} checkingIn={isCheckingIn} />}
+        {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={planSettings} program={program} planIsOpen={planIsOpen} onRefresh={refreshAnalytics} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} onCheckIn={checkInYesterday} checkingIn={isCheckingIn} />}
         {tab === "setup" && <Setup settings={planSettings} locked={planIsOpen} onChange={(next) => void saveSettings(next)} onCreate={createProgram} onMint={mintMockUsdc} pending={isPending} />}
         {tab === "vault" && <Vault balance={balance?.displayValue} freeUsdc={freeUsdc} program={program} onWithdraw={withdrawSavings} pending={isPending} />}
-        {tab === "insights" && <Insights usageSeconds={usageSeconds ?? 0} targetSeconds={allowedSeconds} weekUsage={weekUsage} />}
+        {tab === "insights" && <Insights usageSeconds={usageSeconds ?? 0} targetSeconds={allowedSeconds} weekUsage={weekUsage} onRefresh={refreshAnalytics} />}
       </ScrollView>
 
       <View style={styles.nav}>
@@ -428,7 +424,7 @@ function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, setti
       <Text style={styles.time}>{hasUsageAccess ? (hasUsageData ? formatMinutes(usageSeconds) : "Syncing…") : "—"}</Text>
       <View style={styles.track}><View style={[styles.fill, { width: `${Math.max(progress * 100, 2)}%`, backgroundColor: aboveTarget ? "#9A6049" : moss }]} /></View>
       <View style={styles.timeFooter}><Text style={styles.small}>{hasUsageAccess ? (hasUsageData ? `${formatMinutes(remainingSeconds)} left before your ${settings.targetHours}h limit` : "Reading Android screen time…") : "Give TouchGrass permission to read Android app-use time."}</Text><Pressable onPress={hasUsageAccess ? onRefresh : onRequestAccess}><Text style={styles.link}>{hasUsageAccess ? "Refresh" : "Allow"}</Text></Pressable></View>
-      {hasUsageAccess && <Text style={[styles.small, { marginTop: 8 }]}>Interactive, unlocked screen time; TouchGrass itself is excluded.</Text>}
+      {hasUsageAccess && <Text style={[styles.small, { marginTop: 8 }]}>Interactive, unlocked device screen time.</Text>}
     </View>
     <View style={styles.rule} />
     <View style={styles.releaseRow}><View><Text style={styles.eyebrow}>NEXT DAILY RELEASE</Text><Text style={styles.release}>{settings.dailyUsdc} mUSDC</Text><Text style={styles.small}>Locked until your day closes</Text></View><Pressable style={styles.outlineButton} onPress={onSetup}><Text style={styles.outlineText}>Edit plan</Text></Pressable></View>
@@ -462,13 +458,15 @@ function Vault({ balance, freeUsdc, program, onWithdraw, pending }: { balance?: 
   </>;
 }
 
-function Insights({ usageSeconds, targetSeconds, weekUsage }: { usageSeconds: number; targetSeconds: number; weekUsage: number[] }) {
-  const sample = [...Array(6).fill(0), usageSeconds].map((fallback, index) => weekUsage[index] ?? fallback);
+function Insights({ usageSeconds, targetSeconds, weekUsage, onRefresh }: { usageSeconds: number; targetSeconds: number; weekUsage: number[]; onRefresh: () => void }) {
+  const todayIndex = (new Date().getDay() + 6) % 7;
+  const sample = Array.from({ length: 7 }, (_, index) => index === todayIndex ? usageSeconds : (weekUsage[index] ?? 0));
   const chartMax = Math.max(6 * 3_600, ...sample);
   const labels = ["M", "T", "W", "T", "F", "S", "S"];
   return <>
-    <Text style={styles.pageTitle}>{"Less scroll.\nMore day."}</Text><Text style={styles.pageCopy}>Your seven-day picture lives only on this device.</Text>
-    <View style={styles.chartCard}><View style={styles.chart}>{sample.map((value, index) => <View key={`${labels[index]}-${index}`} style={styles.barGroup}><View style={[styles.bar, { height: `${Math.min(Math.max(value / chartMax, 0.02), 1) * 100}%`, backgroundColor: index === 6 ? ink : moss }]} /><Text style={styles.barLabel}>{labels[index]}</Text></View>)}</View><View style={[styles.targetLine, { top: 20 + (1 - Math.min(targetSeconds / chartMax, 1)) * 195 }]}><Text style={styles.targetText}>TARGET · {formatMinutes(targetSeconds)}</Text></View></View>
+    <Text style={styles.pageTitle}>{"Less scroll.\nMore day."}</Text><Text style={styles.pageCopy}>Your Monday–Sunday screen-time week, kept on this device.</Text>
+    <View style={styles.chartCard}><View style={styles.chart}>{sample.map((value, index) => <View key={`${labels[index]}-${index}`} style={styles.barGroup}><View style={[styles.bar, { height: `${value === 0 ? 0 : Math.min(Math.max(value / chartMax, 0.02), 1) * 100}%`, backgroundColor: index === todayIndex ? ink : moss }]} /><Text style={styles.barLabel}>{labels[index]}</Text></View>)}</View><View style={[styles.targetLine, { top: 20 + (1 - Math.min(targetSeconds / chartMax, 1)) * 195 }]}><Text style={styles.targetText}>TARGET · {formatMinutes(targetSeconds)}</Text></View></View>
+    <Pressable onPress={onRefresh}><Text style={[styles.link, { alignSelf: "flex-end", marginTop: 12 }]}>Refresh week</Text></Pressable>
     <View style={styles.statGrid}><Stat label="TODAY" value={formatMinutes(usageSeconds)} /><Stat label="DAILY TARGET" value={formatMinutes(targetSeconds)} /><Stat label="YOUR INTENTION" value="Make space" /></View>
     <View style={styles.journalLocked}><Ionicons name="lock-closed-outline" size={20} color={ink} /><View><Text style={styles.journalTitle}>Journal, later</Text><Text style={styles.small}>A quiet reflection space is growing in the next milestone.</Text></View></View>
   </>;

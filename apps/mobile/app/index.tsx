@@ -1,7 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
+  AppState,
   Alert,
   Image,
   Linking,
@@ -69,10 +70,10 @@ async function readUsageFor(startTime: number, endTime: number): Promise<number 
   const module = require("@antardev/react-native-usage-stats");
   const usageStats = module.default ?? module;
   if (!usageStats.isPermissionGranted()) return null;
-  const entries = await usageStats.queryUsageStats({ startTime, endTime, interval: "daily" });
-  if (!Array.isArray(entries)) return 0;
-  const totalMs = entries.reduce((sum: number, entry: Record<string, unknown>) => {
-    const packageName = String(entry.packageName ?? entry.package ?? "");
+  const entries = await usageStats.queryAndAggregateUsageStats({ startTime, endTime }) as Record<string, Record<string, unknown>>;
+  const stats = Object.entries(entries);
+  if (stats.length === 0) return null;
+  const totalMs = stats.reduce((sum, [packageName, entry]) => {
     if (packageName === "com.adilhusain.touchgrass") return sum;
     const foreground = Number(entry.totalTimeInForeground ?? entry.foregroundTime ?? 0);
     return sum + (Number.isFinite(foreground) ? foreground : 0);
@@ -92,7 +93,7 @@ export default function TouchGrass() {
   const account = useActiveAccount();
   const { mutate: sendTransaction, isPending } = useSendTransaction();
   const [tab, setTab] = useState<Tab>("today");
-  const [usageSeconds, setUsageSeconds] = useState(0);
+  const [usageSeconds, setUsageSeconds] = useState<number | null>(null);
   const [hasUsageAccess, setHasUsageAccess] = useState(false);
   const [settings, setSettings] = useState<ProgramSettings>(defaultSettings);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -118,7 +119,10 @@ export default function TouchGrass() {
     const usageStats = module.default ?? module;
     const allowed = Boolean(usageStats.isPermissionGranted());
     setHasUsageAccess(allowed);
-    if (!allowed) return;
+    if (!allowed) {
+      setUsageSeconds(null);
+      return;
+    }
     const total = await readTodayUsage();
     if (total !== null) {
       setUsageSeconds(total);
@@ -129,6 +133,12 @@ export default function TouchGrass() {
   }, []);
 
   useEffect(() => { void refreshUsage(); }, [refreshUsage]);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refreshUsage();
+    });
+    return () => subscription.remove();
+  }, [refreshUsage]);
 
   const saveSettings = useCallback(async (next: ProgramSettings) => {
     setSettings(next);
@@ -256,8 +266,8 @@ export default function TouchGrass() {
   };
 
   const allowedSeconds = settings.targetHours * 3_600;
-  const progress = Math.min(usageSeconds / allowedSeconds, 1);
-  const remainingSeconds = Math.max(allowedSeconds - usageSeconds, 0);
+  const progress = Math.min((usageSeconds ?? 0) / allowedSeconds, 1);
+  const remainingSeconds = Math.max(allowedSeconds - (usageSeconds ?? 0), 0);
 
   if (!isLoaded) return <View style={styles.loading}><Text style={styles.logo}>TouchGrass</Text></View>;
 
@@ -272,7 +282,7 @@ export default function TouchGrass() {
         {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={settings} onRefresh={refreshUsage} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} onCheckIn={checkInYesterday} checkingIn={isCheckingIn} />}
         {tab === "setup" && <Setup settings={settings} onChange={(next) => void saveSettings(next)} onCreate={createProgram} onMint={mintMockUsdc} pending={isPending} />}
         {tab === "vault" && <Vault balance={balance?.displayValue} settings={settings} onChange={(next) => void saveSettings(next)} onWithdraw={withdrawSavings} pending={isPending} />}
-        {tab === "insights" && <Insights usageSeconds={usageSeconds} targetSeconds={allowedSeconds} />}
+        {tab === "insights" && <Insights usageSeconds={usageSeconds ?? 0} targetSeconds={allowedSeconds} />}
       </ScrollView>
 
       <View style={styles.nav}>
@@ -285,8 +295,9 @@ export default function TouchGrass() {
   );
 }
 
-function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, settings, onRefresh, onRequestAccess, onSetup, onCheckIn, checkingIn }: { usageSeconds: number; hasUsageAccess: boolean; progress: number; remainingSeconds: number; settings: ProgramSettings; onRefresh: () => void; onRequestAccess: () => void; onSetup: () => void; onCheckIn: () => void; checkingIn: boolean }) {
-  const aboveTarget = progress >= 1;
+function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, settings, onRefresh, onRequestAccess, onSetup, onCheckIn, checkingIn }: { usageSeconds: number | null; hasUsageAccess: boolean; progress: number; remainingSeconds: number; settings: ProgramSettings; onRefresh: () => void; onRequestAccess: () => void; onSetup: () => void; onCheckIn: () => void; checkingIn: boolean }) {
+  const hasUsageData = usageSeconds !== null;
+  const aboveTarget = hasUsageData && progress >= 1;
   return <>
     <View style={styles.eyebrowRow}><Text style={styles.eyebrow}>TODAY’S PATCH</Text><Text style={styles.mono}>{new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" }).toUpperCase()}</Text></View>
     <View style={styles.hero}>
@@ -296,9 +307,9 @@ function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, setti
     </View>
     <View style={styles.timeCard}>
       <Text style={styles.monoLabel}>{hasUsageAccess ? "TRACKED APP TIME" : "USAGE ACCESS NEEDED"}</Text>
-      <Text style={styles.time}>{hasUsageAccess ? formatMinutes(usageSeconds) : "—"}</Text>
+      <Text style={styles.time}>{hasUsageAccess ? (hasUsageData ? formatMinutes(usageSeconds) : "Syncing…") : "—"}</Text>
       <View style={styles.track}><View style={[styles.fill, { width: `${Math.max(progress * 100, 2)}%`, backgroundColor: aboveTarget ? "#9A6049" : moss }]} /></View>
-      <View style={styles.timeFooter}><Text style={styles.small}>{hasUsageAccess ? `${formatMinutes(remainingSeconds)} left before your ${settings.targetHours}h limit` : "Give TouchGrass permission to read Android app-use time."}</Text><Pressable onPress={hasUsageAccess ? onRefresh : onRequestAccess}><Text style={styles.link}>{hasUsageAccess ? "Refresh" : "Allow"}</Text></Pressable></View>
+      <View style={styles.timeFooter}><Text style={styles.small}>{hasUsageAccess ? (hasUsageData ? `${formatMinutes(remainingSeconds)} left before your ${settings.targetHours}h limit` : "Reading Android app-use time…") : "Give TouchGrass permission to read Android app-use time."}</Text><Pressable onPress={hasUsageAccess ? onRefresh : onRequestAccess}><Text style={styles.link}>{hasUsageAccess ? "Refresh" : "Allow"}</Text></Pressable></View>
     </View>
     <View style={styles.rule} />
     <View style={styles.releaseRow}><View><Text style={styles.eyebrow}>NEXT DAILY RELEASE</Text><Text style={styles.release}>{settings.dailyUsdc} mUSDC</Text><Text style={styles.small}>Locked until your day closes</Text></View><Pressable style={styles.outlineButton} onPress={onSetup}><Text style={styles.outlineText}>Edit plan</Text></Pressable></View>

@@ -4,7 +4,7 @@
 
 TouchGrass is a screen-time commitment vault for people who know the feeling: a day disappears into the phone, then any money sitting in the bank disappears with it.
 
-Instead of trying to shame someone out of a habit, TouchGrass lets them pre-commit a small daily spending allowance. They lock a budget in **mUSDC**. If yesterday’s Android app-use time stayed below their chosen limit, they can claim that day’s mUSDC. If not, it remains locked as savings until the program ends.
+Instead of trying to shame someone out of a habit, TouchGrass lets them pre-commit a small daily spending allowance. They lock a budget in **mUSDC**. To release yesterday’s allowance, they must stay below their Android screen-time limit, write a meaningful reflection, and make tomorrow’s plan. If they miss any part, that mUSDC remains locked as savings until the program ends.
 
 **MON is only the gas fee. mUSDC is the budget and the reward.**
 
@@ -16,7 +16,7 @@ Most screen-time apps ask you to resist a feed at the exact moment it is designe
 
 1. Choose a realistic limit and daily amount.
 2. Lock the whole budget before the program starts.
-3. Earn access to each daily allowance with a completed low-screen-time day.
+3. Earn access to each daily allowance with a completed low-screen-time day, reflection, and tomorrow plan.
 4. Let a miss become savings, rather than another reason to give up.
 
 The reward is intentionally small and predictable. The point is not gambling on a streak; it is rebuilding the connection between attention, intention, and spending.
@@ -26,11 +26,13 @@ The reward is intentionally small and predictable. The point is not gambling on 
 ```text
 Mint test mUSDC → approve & lock a 7 / 14 / 28-day budget
        ↓
-Android measures aggregate foreground app time (TouchGrass excluded)
+Android measures aggregate interactive, unlocked screen time
        ↓
-Next day: wallet signs the aggregate check-in
+Reflect on the day (300 characters, 2 active minutes, 3 tomorrow tasks)
        ↓
-Verifier checks one closed day + one voucher per day
+Next day: wallet signs the aggregate check-in and reflection proof
+       ↓
+Verifier checks one closed day, one voucher per day, and the reflection thresholds
        ↓
 Below target → claim daily mUSDC      Above target → mUSDC remains saved
 ```
@@ -43,7 +45,7 @@ TouchGrass puts Monad in the part that matters: the budget is held and released 
 
 | Layer | What it does |
 | --- | --- |
-| Android / Expo | Requests Android Usage Access, aggregates foreground use, keeps local insights |
+| Android / Expo | Requests Android Usage Access, measures interactive unlocked time, and keeps insights + reflections on-device |
 | Monad vault | Custodies mUSDC, prevents replayed claims, holds missed days through cooldown |
 | Cloudflare Worker + D1 | Verifies wallet-signed reports, prevents duplicate vouchers, signs EIP-712 claims |
 | mUSDC faucet | Gives every demo wallet a harmless 1,000 mUSDC test budget |
@@ -62,15 +64,16 @@ The app’s `.env.example` already contains the live vault, mUSDC, and verifier 
 2. Tap **Mint 1,000 demo mUSDC**.
 3. Set a 7-day, 3-hour plan with a 1 mUSDC daily allowance.
 4. Approve then lock the 7 mUSDC budget. Show the `ProgramCreated` event on MonadScan.
-5. Show Android Usage Access and the on-device “Today” time card.
-6. Submit a successful completed day. The verifier returns a signed voucher and the vault releases 1 mUSDC.
-7. Explain that a missed day does not vanish: it waits as savings until the program and 7-day cooldown finish.
+5. Show Android Usage Access, the on-device “Today” time card, and the Monday–Sunday insights chart.
+6. In **Reflect**, write 300+ characters, spend two active minutes writing, and add three tomorrow tasks. Show that the journal remains local.
+7. Submit a successful completed day. The verifier checks the aggregate usage and reflection thresholds, returns a signed voucher, and the vault releases 1 mUSDC.
+8. Explain that a missed day does not vanish: it waits as savings until the program and 7-day cooldown finish.
 
 ## Repository map
 
 ```text
 apps/mobile     Android-first Expo app, thirdweb embedded wallet, UsageStatsManager
-apps/verifier   Hono Cloudflare Worker, D1 replay protection, EIP-712 voucher signer
+apps/verifier   Hono Cloudflare Worker, D1 replay protection, reflection threshold checks, EIP-712 voucher signer
 contracts       Foundry contracts: AllowanceVault + MockUSDC, including accounting tests
 site            Static Vercel-ready landing page and APK-release download link
 ```
@@ -116,13 +119,14 @@ For a new testnet deployment, use a funded disposable deployer and the official 
 
 - Five Foundry tests covering budget custody, approval failure, single claim, invalid/early voucher rejection, and cooldown withdrawal.
 - Verifier TypeScript check.
-- Mobile TypeScript check, Expo lint, and Android native prebuild.
+- Expo lint and Android native prebuild.
 - Live contract reads confirming the active vault’s mUSDC asset and verifier signer.
 
 ## Honest MVP boundaries
 
 - Android only. iOS Screen Time needs Apple’s Family Controls entitlement and extensions.
 - The verifier blocks duplicate vouchers; it cannot make consumer usage data trustless against the device owner.
-- The current token is intentionally permissionless mock USDC. Real money, selected-app rules, social accountability, leaderboards, and the “journal only after a good day” ritual are future milestones.
+- The current token is intentionally permissionless mock USDC. Real money, selected-app rules, social accountability, and leaderboards are future milestones.
+- Reflections and tomorrow plans live only on the device. The verifier receives only their character count, active writing seconds, and task count—not journal text or task content.
 
 TouchGrass is deliberately small: one meaningful daily decision, one budget, and a little more room for real life.

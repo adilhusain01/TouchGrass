@@ -70,15 +70,51 @@ async function readUsageFor(startTime: number, endTime: number): Promise<number 
   const module = require("@antardev/react-native-usage-stats");
   const usageStats = module.default ?? module;
   if (!usageStats.isPermissionGranted()) return null;
-  const entries = await usageStats.queryAndAggregateUsageStats({ startTime, endTime }) as Record<string, Record<string, unknown>>;
-  const stats = Object.entries(entries);
-  if (stats.length === 0) return null;
-  const totalMs = stats.reduce((sum, [packageName, entry]) => {
-    if (packageName === "com.adilhusain.touchgrass") return sum;
-    const foreground = Number(entry.totalTimeInForeground ?? entry.foregroundTime ?? 0);
-    return sum + (Number.isFinite(foreground) ? foreground : 0);
-  }, 0);
-  return Math.round(totalMs / 1_000);
+  const events = await usageStats.queryEvents({ startTime, endTime }) as {
+    eventType: number;
+    packageName: string;
+    timeStamp: number;
+  }[];
+  if (events.length === 0) return null;
+
+  const eventType = module.UsageEventType;
+  const screenSegments: [number, number][] = [];
+  const touchGrassSegments: [number, number][] = [];
+  let interactive = false;
+  let unlocked = false;
+  let screenStartedAt: number | null = null;
+  let touchGrassStartedAt: number | null = null;
+
+  const updateScreenSegment = (time: number) => {
+    const active = interactive && unlocked;
+    if (active && screenStartedAt === null) screenStartedAt = time;
+    if (!active && screenStartedAt !== null) {
+      screenSegments.push([screenStartedAt, time]);
+      screenStartedAt = null;
+    }
+  };
+
+  for (const event of events.sort((a, b) => a.timeStamp - b.timeStamp)) {
+    const time = Math.min(Math.max(event.timeStamp, startTime), endTime);
+    if (event.eventType === eventType.SCREEN_INTERACTIVE) interactive = true;
+    else if (event.eventType === eventType.SCREEN_NON_INTERACTIVE) interactive = false;
+    else if (event.eventType === eventType.KEYGUARD_HIDDEN) unlocked = true;
+    else if (event.eventType === eventType.KEYGUARD_SHOWN) unlocked = false;
+    else if (event.packageName === "com.adilhusain.touchgrass") {
+      if (event.eventType === eventType.ACTIVITY_RESUMED) touchGrassStartedAt = time;
+      if ((event.eventType === eventType.ACTIVITY_PAUSED || event.eventType === eventType.ACTIVITY_STOPPED) && touchGrassStartedAt !== null) {
+        touchGrassSegments.push([touchGrassStartedAt, time]);
+        touchGrassStartedAt = null;
+      }
+    }
+    updateScreenSegment(time);
+  }
+  updateScreenSegment(endTime);
+  if (touchGrassStartedAt !== null) touchGrassSegments.push([touchGrassStartedAt, endTime]);
+
+  const screenMs = screenSegments.reduce((total, [start, end]) => total + end - start, 0);
+  const touchGrassMs = touchGrassSegments.reduce((total, [appStart, appEnd]) => total + screenSegments.reduce((overlap, [screenStart, screenEnd]) => overlap + Math.max(0, Math.min(appEnd, screenEnd) - Math.max(appStart, screenStart)), 0), 0);
+  return Math.round(Math.max(0, screenMs - touchGrassMs) / 1_000);
 }
 
 async function installationId() {
@@ -197,7 +233,10 @@ export default function TouchGrass() {
     const transaction = prepareContractCall({ contract: usdc, method: "function mint()" });
     sendTransaction(transaction as never, {
       onSuccess: () => Alert.alert("1,000 mUSDC minted", "This is a test token for your TouchGrass budget."),
-      onError: (error) => Alert.alert("Could not mint mUSDC", error.message),
+      onError: (error) => Alert.alert(
+        /insufficient balance/i.test(error.message) ? "Your TouchGrass wallet needs MON" : "Could not mint mUSDC",
+        /insufficient balance/i.test(error.message) ? "Send a little Monad testnet MON to this embedded wallet. mUSDC is free; MON only pays the transaction fee." : error.message,
+      ),
     });
   };
 
@@ -306,10 +345,11 @@ function Today({ usageSeconds, hasUsageAccess, progress, remainingSeconds, setti
       <Text style={styles.heroCopy}>{aboveTarget ? "Today’s allowance is safe in savings." : "A small mUSDC allowance unlocks when your day closes under target."}</Text>
     </View>
     <View style={styles.timeCard}>
-      <Text style={styles.monoLabel}>{hasUsageAccess ? "TRACKED APP TIME" : "USAGE ACCESS NEEDED"}</Text>
+      <Text style={styles.monoLabel}>{hasUsageAccess ? "TRACKED SCREEN TIME" : "USAGE ACCESS NEEDED"}</Text>
       <Text style={styles.time}>{hasUsageAccess ? (hasUsageData ? formatMinutes(usageSeconds) : "Syncing…") : "—"}</Text>
       <View style={styles.track}><View style={[styles.fill, { width: `${Math.max(progress * 100, 2)}%`, backgroundColor: aboveTarget ? "#9A6049" : moss }]} /></View>
-      <View style={styles.timeFooter}><Text style={styles.small}>{hasUsageAccess ? (hasUsageData ? `${formatMinutes(remainingSeconds)} left before your ${settings.targetHours}h limit` : "Reading Android app-use time…") : "Give TouchGrass permission to read Android app-use time."}</Text><Pressable onPress={hasUsageAccess ? onRefresh : onRequestAccess}><Text style={styles.link}>{hasUsageAccess ? "Refresh" : "Allow"}</Text></Pressable></View>
+      <View style={styles.timeFooter}><Text style={styles.small}>{hasUsageAccess ? (hasUsageData ? `${formatMinutes(remainingSeconds)} left before your ${settings.targetHours}h limit` : "Reading Android screen time…") : "Give TouchGrass permission to read Android app-use time."}</Text><Pressable onPress={hasUsageAccess ? onRefresh : onRequestAccess}><Text style={styles.link}>{hasUsageAccess ? "Refresh" : "Allow"}</Text></Pressable></View>
+      {hasUsageAccess && <Text style={[styles.small, { marginTop: 8 }]}>Interactive, unlocked screen time; TouchGrass itself is excluded.</Text>}
     </View>
     <View style={styles.rule} />
     <View style={styles.releaseRow}><View><Text style={styles.eyebrow}>NEXT DAILY RELEASE</Text><Text style={styles.release}>{settings.dailyUsdc} mUSDC</Text><Text style={styles.small}>Locked until your day closes</Text></View><Pressable style={styles.outlineButton} onPress={onSetup}><Text style={styles.outlineText}>Edit plan</Text></Pressable></View>
@@ -346,7 +386,7 @@ function Insights({ usageSeconds, targetSeconds }: { usageSeconds: number; targe
   const labels = ["M", "T", "W", "T", "F", "S", "S"];
   return <>
     <Text style={styles.pageTitle}>{"Less scroll.\nMore day."}</Text><Text style={styles.pageCopy}>Your seven-day picture lives only on this device.</Text>
-    <View style={styles.chartCard}><View style={styles.chart}>{sample.map((value, index) => <View key={labels[index]} style={styles.barGroup}><View style={[styles.bar, { height: `${Math.min(Math.max(value, 0.07), 1) * 100}%`, backgroundColor: index === 6 ? ink : moss }]} /><Text style={styles.barLabel}>{labels[index]}</Text></View>)}</View><View style={styles.targetLine}><Text style={styles.targetText}>TARGET · {formatMinutes(targetSeconds)}</Text></View></View>
+    <View style={styles.chartCard}><View style={styles.chart}>{sample.map((value, index) => <View key={`${labels[index]}-${index}`} style={styles.barGroup}><View style={[styles.bar, { height: `${Math.min(Math.max(value, 0.07), 1) * 100}%`, backgroundColor: index === 6 ? ink : moss }]} /><Text style={styles.barLabel}>{labels[index]}</Text></View>)}</View><View style={styles.targetLine}><Text style={styles.targetText}>TARGET · {formatMinutes(targetSeconds)}</Text></View></View>
     <View style={styles.statGrid}><Stat label="TODAY" value={formatMinutes(usageSeconds)} /><Stat label="DAILY TARGET" value={formatMinutes(targetSeconds)} /><Stat label="YOUR INTENTION" value="Make space" /></View>
     <View style={styles.journalLocked}><Ionicons name="lock-closed-outline" size={20} color={ink} /><View><Text style={styles.journalTitle}>Journal, later</Text><Text style={styles.small}>A quiet reflection space is growing in the next milestone.</Text></View></View>
   </>;

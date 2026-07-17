@@ -4,7 +4,8 @@ export const chain = defineChain({
   id: 10143,
   name: "Monad Testnet",
   nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-  rpc: "https://monad-testnet.drpc.org",
+  // dRPC currently rejects eth_estimateGas on this testnet, which prevents embedded-wallet writes.
+  rpc: "https://testnet-rpc.monad.xyz",
   blockExplorers: [{ name: "MonadScan", url: "https://testnet.monadscan.com" }],
 });
 

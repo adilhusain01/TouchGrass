@@ -2,11 +2,20 @@
 
 ## Description
 
-### Make less screen time feel real
+### Four problems I could not solve with willpower
 
-TouchGrass is a screen-time commitment vault for a familiar loop: a day disappears into the phone, then money that is easy to reach disappears too.
+I built TouchGrass because I was stuck in four connected loops:
 
-Most screen-time limits ask for willpower at the exact moment a feed is designed to defeat it. TouchGrass moves that decision upstream. A user chooses a realistic Android screen-time limit, locks a small mUSDC budget for 7, 14, or 28 days, and earns one daily allowance back only after completing the day intentionally.
+1. Doomscrolling: high screen time, low productivity.
+2. Spending too much on food and small impulses until my money is gone.
+3. Avoiding journaling because a screen-heavy day leaves little that feels worth reflecting on.
+4. Ending the day without a clear plan for tomorrow.
+
+I want to solve this for myself—and for anyone caught in the same loop.
+
+TouchGrass is a screen-time commitment vault: when a day disappears into a phone, money that is easy to reach often disappears too.
+
+Most screen-time limits ask for willpower at the exact moment a feed is designed to defeat it. TouchGrass moves that decision upstream. A user chooses a realistic Android screen-time limit, locks a small mUSDC budget for 7, 14, or 28 days, and earns one daily allowance back only after completing the day as intended.
 
 The ritual is deliberately small: stay under the limit, write a 300-character reflection, spend two active minutes writing, and make at least three tasks for tomorrow. On the following day, the app submits only the aggregate proof—screen-time seconds, character count, writing seconds, and task count. The journal and task content never leave the device.
 
@@ -29,7 +38,7 @@ Next day: sign one aggregate check-in
        ↓
 Verifier prevents replay and signs one claim voucher
        ↓
-Under target + reflection complete → daily mUSDC released
+Phone use ≤ target + reflection complete → daily mUSDC released
 Otherwise → that allowance stays saved in the vault
 ```
 

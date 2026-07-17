@@ -101,12 +101,15 @@ app.post("/v1/verify-day", async (c) => {
   const wallet = asAddress(body?.wallet);
   const dayIndex = asDayIndex(body?.dayIndex);
   const usageSeconds = asNonNegativeInt(body?.usageSeconds);
+  const journalChars = asBoundedInt(body?.journalChars, 20_000);
+  const journalSeconds = asBoundedInt(body?.journalSeconds, 14_400);
+  const planItems = asBoundedInt(body?.planItems, 50);
   const periodStart = asUnixMs(body?.periodStart);
   const periodEnd = asUnixMs(body?.periodEnd);
   const installationId = asInstallationId(body?.installationId);
   const signature = asHex(body?.walletSignature);
   if (
-    !programId || !wallet || dayIndex === null || usageSeconds === null || !periodStart || !periodEnd || !installationId || !signature
+    !programId || !wallet || dayIndex === null || usageSeconds === null || journalChars === null || journalSeconds === null || planItems === null || !periodStart || !periodEnd || !installationId || !signature
   ) return badRequest(c, "Invalid daily report");
   if (!isConfigured(c.env)) return c.json({ error: "Verifier is not configured" }, 503);
 
@@ -124,11 +127,14 @@ app.post("/v1/verify-day", async (c) => {
     return badRequest(c, "This program day has not closed yet");
   }
 
-  const message = checkInMessage({ programId, wallet, dayIndex, usageSeconds, periodStart, periodEnd, installationId });
+  const message = checkInMessage({ programId, wallet, dayIndex, usageSeconds, journalChars, journalSeconds, planItems, periodStart, periodEnd, installationId });
   if (!(await verifyMessage({ address: wallet, message, signature }))) return badRequest(c, "Wallet signature is invalid");
 
   if (usageSeconds > program.daily_limit_seconds) {
     return c.json({ eligible: false, reason: "Daily target was exceeded; the allowance stays in savings." }, 200);
+  }
+  if (journalChars < 300 || journalSeconds < 120 || planItems < 3) {
+    return c.json({ eligible: false, reason: "Write your reflection and tomorrow plan before claiming this day’s allowance." }, 200);
   }
 
   const existing = await c.env.DB.prepare(
@@ -153,8 +159,8 @@ app.post("/v1/verify-day", async (c) => {
   });
 
   await c.env.DB.prepare(
-    "INSERT INTO vouchers (program_id, day_index, usage_seconds, period_start, period_end, signature, valid_until, issued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).bind(programId, dayIndex, usageSeconds, periodStart, periodEnd, voucherSignature, validUntil, Date.now()).run();
+    "INSERT INTO vouchers (program_id, day_index, usage_seconds, journal_chars, journal_seconds, plan_items, period_start, period_end, signature, valid_until, issued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(programId, dayIndex, usageSeconds, journalChars, journalSeconds, planItems, periodStart, periodEnd, voucherSignature, validUntil, Date.now()).run();
 
   return c.json({ eligible: true, voucher: { dayIndex, validUntil, signature: voucherSignature } });
 });
@@ -172,8 +178,8 @@ function registrationMessage(programId: string, wallet: Address, timezone: strin
   return `TouchGrass program registration\nprogram: ${programId}\nwallet: ${wallet.toLowerCase()}\ntimezone: ${timezone}\ndevice: ${installationId}`;
 }
 
-function checkInMessage(input: { programId: string; wallet: Address; dayIndex: number; usageSeconds: number; periodStart: number; periodEnd: number; installationId: string }) {
-  return `TouchGrass daily check-in\nprogram: ${input.programId}\nwallet: ${input.wallet.toLowerCase()}\nday: ${input.dayIndex}\nusageSeconds: ${input.usageSeconds}\nperiodStart: ${input.periodStart}\nperiodEnd: ${input.periodEnd}\ndevice: ${input.installationId}`;
+function checkInMessage(input: { programId: string; wallet: Address; dayIndex: number; usageSeconds: number; journalChars: number; journalSeconds: number; planItems: number; periodStart: number; periodEnd: number; installationId: string }) {
+  return `TouchGrass daily check-in\nprogram: ${input.programId}\nwallet: ${input.wallet.toLowerCase()}\nday: ${input.dayIndex}\nusageSeconds: ${input.usageSeconds}\njournalChars: ${input.journalChars}\njournalSeconds: ${input.journalSeconds}\nplanItems: ${input.planItems}\nperiodStart: ${input.periodStart}\nperiodEnd: ${input.periodEnd}\ndevice: ${input.installationId}`;
 }
 
 function badRequest(c: Context<{ Bindings: Bindings }>, error: string) {
@@ -200,6 +206,9 @@ function asDayIndex(value: unknown): number | null {
 }
 function asNonNegativeInt(value: unknown): number | null {
   return Number.isInteger(value) && typeof value === "number" && value >= 0 && value <= 86_400 ? value : null;
+}
+function asBoundedInt(value: unknown, max: number): number | null {
+  return Number.isInteger(value) && typeof value === "number" && value >= 0 && value <= max ? value : null;
 }
 function asUnixMs(value: unknown): number | null {
   return Number.isInteger(value) && typeof value === "number" && value > 1_600_000_000_000 && value < 4_000_000_000_000 ? value : null;

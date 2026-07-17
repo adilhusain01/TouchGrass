@@ -27,7 +27,7 @@ import { getContract, prepareContractCall, readContract, toTokens, toUnits } fro
 
 import { chain, getClient, mockUsdcAddress, vaultAddress, verifierUrl } from "@/constants/thirdweb";
 
-type Tab = "today" | "setup" | "vault" | "insights";
+type Tab = "today" | "reflect" | "setup" | "vault" | "insights";
 type ProgramSettings = {
   duration: 7 | 14 | 28;
   targetHours: number;
@@ -43,9 +43,12 @@ type OnchainProgram = {
   dailyAmount: bigint;
   claimedBitmap: bigint;
 };
+type TomorrowPlan = { must: string[]; should: string[]; ifTime: string[] };
+type JournalRecord = { dayStart: number; text: string; activeSeconds: number; plan: TomorrowPlan; updatedAt: number };
 
 const SETTINGS_KEY = "touchgrass.settings.v1";
 const INSTALLATION_KEY = "touchgrass.installation-id.v1";
+const JOURNAL_DAYS_KEY = "touchgrass.journal-days.v1";
 const ink = "#17140E";
 const paper = "#F4EEDF";
 const line = "#D4CCBC";
@@ -53,6 +56,7 @@ const moss = "#56734B";
 const softMoss = "#E5EAD8";
 const client = getClient();
 const defaultSettings: ProgramSettings = { duration: 14, targetHours: 3, dailyUsdc: "1", programId: "" };
+const blankJournal = (dayStart = dateStart()): JournalRecord => ({ dayStart, text: "", activeSeconds: 0, plan: { must: [], should: [], ifTime: [] }, updatedAt: Date.now() });
 
 function dateStart() {
   const now = new Date();
@@ -79,6 +83,25 @@ function lockedAmount(program?: OnchainProgram) {
     if ((program.claimedBitmap & (1n << BigInt(day))) !== 0n) claimedDays += 1;
   }
   return program.dailyAmount * BigInt(program.durationDays - claimedDays);
+}
+
+function journalKey(dayStart: number) {
+  return `touchgrass.journal.${dayStart}.v1`;
+}
+
+function journalTaskCount(journal: JournalRecord) {
+  return journal.plan.must.length + journal.plan.should.length + journal.plan.ifTime.length;
+}
+
+async function readJournal(dayStart: number) {
+  const saved = await AsyncStorage.getItem(journalKey(dayStart));
+  return saved ? JSON.parse(saved) as JournalRecord : undefined;
+}
+
+async function saveJournal(journal: JournalRecord) {
+  await AsyncStorage.setItem(journalKey(journal.dayStart), JSON.stringify(journal));
+  const days = JSON.parse((await AsyncStorage.getItem(JOURNAL_DAYS_KEY)) ?? "[]") as number[];
+  if (!days.includes(journal.dayStart)) await AsyncStorage.setItem(JOURNAL_DAYS_KEY, JSON.stringify([...days, journal.dayStart].sort((a, b) => b - a)));
 }
 
 async function readTodayUsage(): Promise<number | null> {
@@ -148,6 +171,10 @@ export default function TouchGrass() {
   const [settings, setSettings] = useState<ProgramSettings>(defaultSettings);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
+  const [journal, setJournal] = useState<JournalRecord>(blankJournal);
+  const [journalHistory, setJournalHistory] = useState<JournalRecord[]>([]);
+  const [journalLoaded, setJournalLoaded] = useState(false);
+  const [isWriting, setIsWriting] = useState(false);
 
   const { data: balance, refetch: refetchBalance } = useWalletBalance({
     client,
@@ -194,6 +221,29 @@ export default function TouchGrass() {
       setIsLoaded(true);
     }).catch(() => setIsLoaded(true));
   }, []);
+  useEffect(() => {
+    const loadJournal = async () => {
+      const today = dateStart();
+      const current = (await readJournal(today)) ?? blankJournal(today);
+      const days = JSON.parse((await AsyncStorage.getItem(JOURNAL_DAYS_KEY)) ?? "[]") as number[];
+      const records = (await Promise.all(days.slice(0, 7).map(readJournal))).filter((record): record is JournalRecord => Boolean(record));
+      setJournal(current);
+      setJournalHistory(records);
+      setJournalLoaded(true);
+    };
+    void loadJournal();
+  }, []);
+  useEffect(() => {
+    if (!journalLoaded) return;
+    const updated = { ...journal, updatedAt: Date.now() };
+    void saveJournal(updated);
+    setJournalHistory((entries) => [updated, ...entries.filter((entry) => entry.dayStart !== updated.dayStart)].sort((a, b) => b.dayStart - a.dayStart));
+  }, [journal, journalLoaded]);
+  useEffect(() => {
+    if (!isWriting || journal.text.trim().length === 0) return;
+    const timer = setInterval(() => setJournal((entry) => ({ ...entry, activeSeconds: entry.activeSeconds + 1 })), 1_000);
+    return () => clearInterval(timer);
+  }, [isWriting, journal.text]);
 
   const refreshUsage = useCallback(async () => {
     if (Platform.OS !== "android") return;
@@ -350,11 +400,18 @@ export default function TouchGrass() {
       if (dayIndex < 0) throw new Error("Your first program day has not closed yet.");
       const yesterday = await readUsageFor(periodStart, periodEnd);
       if (yesterday === null) throw new Error("Usage Access is not available.");
-      const message = `TouchGrass daily check-in\nprogram: ${program.id}\nwallet: ${account.address.toLowerCase()}\nday: ${dayIndex}\nusageSeconds: ${yesterday}\nperiodStart: ${periodStart}\nperiodEnd: ${periodEnd}\ndevice: ${deviceId}`;
+      const reflection = await readJournal(periodStart);
+      const journalChars = reflection?.text.trim().length ?? 0;
+      const journalSeconds = reflection?.activeSeconds ?? 0;
+      const planItems = reflection ? journalTaskCount(reflection) : 0;
+      if (!reflection || journalChars < 300 || journalSeconds < 120 || planItems < 3) {
+        throw new Error("Yesterday needs a 300-character reflection, two minutes of writing, and three tomorrow tasks before its allowance can be claimed.");
+      }
+      const message = `TouchGrass daily check-in\nprogram: ${program.id}\nwallet: ${account.address.toLowerCase()}\nday: ${dayIndex}\nusageSeconds: ${yesterday}\njournalChars: ${journalChars}\njournalSeconds: ${journalSeconds}\nplanItems: ${planItems}\nperiodStart: ${periodStart}\nperiodEnd: ${periodEnd}\ndevice: ${deviceId}`;
       const walletSignature = await account.signMessage({ message });
       const response = await fetch(`${verifierUrl.replace(/\/$/, "")}/v1/verify-day`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ programId: program.id.toString(), wallet: account.address, dayIndex, usageSeconds: yesterday, periodStart, periodEnd, installationId: deviceId, walletSignature }),
+        body: JSON.stringify({ programId: program.id.toString(), wallet: account.address, dayIndex, usageSeconds: yesterday, journalChars, journalSeconds, planItems, periodStart, periodEnd, installationId: deviceId, walletSignature }),
       });
       const result = await response.json() as { eligible?: boolean; reason?: string; error?: string; voucher?: { dayIndex: number; validUntil: number; signature: `0x${string}` } };
       if (!response.ok) throw new Error(result.error ?? "Verification failed");
@@ -394,6 +451,7 @@ export default function TouchGrass() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {tab === "today" && <Today usageSeconds={usageSeconds} hasUsageAccess={hasUsageAccess} progress={progress} remainingSeconds={remainingSeconds} settings={planSettings} program={program} planIsOpen={planIsOpen} onRefresh={refreshAnalytics} onRequestAccess={requestUsageAccess} onSetup={() => setTab("setup")} onCheckIn={checkInYesterday} checkingIn={isCheckingIn} />}
+        {tab === "reflect" && <Reflect journal={journal} history={journalHistory.filter((entry) => entry.dayStart !== journal.dayStart)} isWriting={isWriting} onWriting={setIsWriting} onChange={setJournal} />}
         {tab === "setup" && <Setup settings={planSettings} locked={planIsOpen} onChange={(next) => void saveSettings(next)} onCreate={createProgram} onMint={mintMockUsdc} pending={isPending} />}
         {tab === "vault" && <Vault balance={balance?.displayValue} freeUsdc={freeUsdc} program={program} onWithdraw={withdrawSavings} pending={isPending} />}
         {tab === "insights" && <Insights usageSeconds={usageSeconds ?? 0} targetSeconds={allowedSeconds} weekUsage={weekUsage} onRefresh={refreshAnalytics} />}
@@ -401,6 +459,7 @@ export default function TouchGrass() {
 
       <View style={styles.nav}>
         <NavItem active={tab === "today"} icon="sunny-outline" label="Today" onPress={() => setTab("today")} />
+        <NavItem active={tab === "reflect"} icon="book-outline" label="Reflect" onPress={() => setTab("reflect")} />
         <NavItem active={tab === "setup"} icon="leaf-outline" label="Plan" onPress={() => setTab("setup")} />
         <NavItem active={tab === "vault"} icon="lock-closed-outline" label="Vault" onPress={() => setTab("vault")} />
         <NavItem active={tab === "insights"} icon="pulse-outline" label="Insights" onPress={() => setTab("insights")} />
@@ -468,13 +527,40 @@ function Insights({ usageSeconds, targetSeconds, weekUsage, onRefresh }: { usage
     <View style={styles.chartCard}><View style={styles.chart}>{sample.map((value, index) => <View key={`${labels[index]}-${index}`} style={styles.barGroup}><View style={[styles.bar, { height: `${value === 0 ? 0 : Math.min(Math.max(value / chartMax, 0.02), 1) * 100}%`, backgroundColor: index === todayIndex ? ink : moss }]} /><Text style={styles.barLabel}>{labels[index]}</Text></View>)}</View><View style={[styles.targetLine, { top: 20 + (1 - Math.min(targetSeconds / chartMax, 1)) * 195 }]}><Text style={styles.targetText}>TARGET · {formatMinutes(targetSeconds)}</Text></View></View>
     <Pressable onPress={onRefresh}><Text style={[styles.link, { alignSelf: "flex-end", marginTop: 12 }]}>Refresh week</Text></Pressable>
     <View style={styles.statGrid}><Stat label="TODAY" value={formatMinutes(usageSeconds)} /><Stat label="DAILY TARGET" value={formatMinutes(targetSeconds)} /><Stat label="YOUR INTENTION" value="Make space" /></View>
-    <View style={styles.journalLocked}><Ionicons name="lock-closed-outline" size={20} color={ink} /><View><Text style={styles.journalTitle}>Journal, later</Text><Text style={styles.small}>A quiet reflection space is growing in the next milestone.</Text></View></View>
   </>;
+}
+
+function Reflect({ journal, history, isWriting, onWriting, onChange }: { journal: JournalRecord; history: JournalRecord[]; isWriting: boolean; onWriting: (value: boolean) => void; onChange: (next: JournalRecord) => void }) {
+  const chars = journal.text.trim().length;
+  const tasks = journalTaskCount(journal);
+  return <>
+    <Text style={styles.pageTitle}>Close the day well.</Text><Text style={styles.pageCopy}>Write a little about today, then make tomorrow easier to begin.</Text>
+    <View style={styles.reflectStatus}><Stat label="REFLECTION" value={`${chars}/300`} /><Stat label="WRITING" value={`${Math.min(journal.activeSeconds, 120)}s / 120s`} /><Stat label="TOMORROW" value={`${tasks}/3 tasks`} /></View>
+    <Text style={styles.eyebrow}>TODAY’S REFLECTION</Text>
+    <View style={styles.journalEditor}><TextInput multiline value={journal.text} onFocus={() => onWriting(true)} onBlur={() => onWriting(false)} onChangeText={(text) => onChange({ ...journal, text })} placeholder="What made today feel real? What do you want to remember?" placeholderTextColor="#9F978A" style={styles.journalInput} textAlignVertical="top" /><Text style={styles.editorFooter}>{isWriting ? "Writing time is counting" : "Tap to write"} · {chars} characters</Text></View>
+    <Text style={styles.eyebrow}>TOMORROW’S WORK</Text>
+    <TaskGroup title="MUST DO" hint="The few things that matter most" tasks={journal.plan.must} onChange={(must) => onChange({ ...journal, plan: { ...journal.plan, must } })} />
+    <TaskGroup title="SHOULD DO" hint="Helpful if the day allows" tasks={journal.plan.should} onChange={(should) => onChange({ ...journal, plan: { ...journal.plan, should } })} />
+    <TaskGroup title="IF THERE’S TIME" hint="Nice-to-have, no pressure" tasks={journal.plan.ifTime} onChange={(ifTime) => onChange({ ...journal, plan: { ...journal.plan, ifTime } })} />
+    <Text style={styles.eyebrow}>PAST DAYS</Text>
+    {history.length === 0 ? <Text style={styles.small}>Your reflections will collect here, newest first.</Text> : history.map((entry) => <View key={entry.dayStart} style={styles.historyCard}><Text style={styles.historyDate}>{new Date(entry.dayStart).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}</Text><Text style={styles.historyExcerpt} numberOfLines={2}>{entry.text || "No reflection written."}</Text><Text style={styles.small}>{entry.text.trim().length} characters · {journalTaskCount(entry)} tomorrow tasks</Text></View>)}
+  </>;
+}
+
+function TaskGroup({ title, hint, tasks, onChange }: { title: string; hint: string; tasks: string[]; onChange: (tasks: string[]) => void }) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const task = draft.trim();
+    if (!task) return;
+    onChange([...tasks, task]);
+    setDraft("");
+  };
+  return <View style={styles.taskGroup}><Text style={styles.taskTitle}>{title}</Text><Text style={styles.taskHint}>{hint}</Text>{tasks.map((task, index) => <View key={`${task}-${index}`} style={styles.taskRow}><Ionicons name="ellipse-outline" size={16} color={moss} /><Text style={styles.taskText}>{task}</Text><Pressable onPress={() => onChange(tasks.filter((_, itemIndex) => itemIndex !== index))}><Ionicons name="close" size={18} color="#817A6E" /></Pressable></View>)}<View style={styles.taskAdd}><TextInput value={draft} onChangeText={setDraft} onSubmitEditing={add} placeholder="Add a task" placeholderTextColor="#9F978A" style={styles.taskInput} returnKeyType="done" /><Pressable onPress={add}><Ionicons name="add-circle" size={24} color={ink} /></Pressable></View></View>;
 }
 
 function NavItem({ active, icon, label, onPress }: { active: boolean; icon: keyof typeof Ionicons.glyphMap; label: string; onPress: () => void }) { return <Pressable style={styles.navItem} onPress={onPress}><Ionicons name={icon} size={21} color={active ? ink : "#928A7D"} /><Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text></Pressable>; }
 function Stat({ label, value }: { label: string; value: string }) { return <View style={styles.stat}><Text style={styles.monoLabel}>{label}</Text><Text style={styles.statValue}>{value}</Text></View>; }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: paper }, loading: { flex: 1, backgroundColor: paper, alignItems: "center", justifyContent: "center" }, topbar: { height: 68, paddingHorizontal: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, wordmark: { flexDirection: "row", alignItems: "center", gap: 9 }, headerGrass: { width: 31, height: 31, resizeMode: "contain" }, logo: { fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 25, fontWeight: "700", color: ink, letterSpacing: -0.7 }, walletPill: { borderWidth: 1, borderColor: line, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, flexDirection: "row", alignItems: "center", gap: 6 }, mono: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: ink, fontSize: 12 }, scroll: { paddingHorizontal: 22, paddingTop: 15, paddingBottom: 108 }, eyebrowRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }, eyebrow: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: "#777064", letterSpacing: 1.6, fontSize: 10, marginTop: 23, marginBottom: 10 }, hero: { minHeight: 305, borderWidth: 1, borderColor: line, borderRadius: 26, overflow: "hidden", backgroundColor: "#DED8C9", padding: 22, justifyContent: "flex-end" }, grass: { position: "absolute", width: "112%", height: 290, top: -35, right: -22, opacity: 0.74 }, heroTitle: { fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 39, lineHeight: 38, fontWeight: "700", color: "#FFFDF5", letterSpacing: -1.2, textShadowColor: "rgba(0,0,0,0.35)", textShadowRadius: 8 }, heroCopy: { color: "#FFFDF5", fontSize: 13, lineHeight: 19, maxWidth: 232, marginTop: 10, textShadowColor: "rgba(0,0,0,0.45)", textShadowRadius: 5 }, timeCard: { marginTop: 16, borderRadius: 22, padding: 19, backgroundColor: "#FFFDF7", borderWidth: 1, borderColor: line }, monoLabel: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: "#7A7367", letterSpacing: 1.2, fontSize: 10 }, time: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 48, lineHeight: 58, letterSpacing: -2, marginTop: 3 }, track: { height: 7, borderRadius: 6, backgroundColor: "#E4DECF", marginTop: 12, overflow: "hidden" }, fill: { height: "100%", borderRadius: 6 }, timeFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 11 }, small: { color: "#777064", fontSize: 12, lineHeight: 17, flexShrink: 1 }, link: { color: ink, fontWeight: "700", fontSize: 12, textDecorationLine: "underline" }, rule: { height: 1, backgroundColor: line, marginVertical: 23 }, releaseRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, release: { color: ink, fontSize: 26, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", marginVertical: 2 }, outlineButton: { paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: ink, borderRadius: 11 }, outlineText: { color: ink, fontWeight: "700", fontSize: 13 }, disclaimer: { color: "#9A9387", fontSize: 11, lineHeight: 16, marginTop: 26 }, nav: { height: 78, position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: "#FFFDF7", borderTopWidth: 1, borderColor: line, flexDirection: "row", justifyContent: "space-around", paddingTop: 13 }, navItem: { minWidth: 55, alignItems: "center", gap: 3 }, navText: { color: "#928A7D", fontSize: 10 }, navTextActive: { color: ink, fontWeight: "700" }, pageTitle: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", fontSize: 43, lineHeight: 44, letterSpacing: -1.5, marginTop: 8 }, pageCopy: { color: "#716A5F", fontSize: 15, lineHeight: 22, marginTop: 12, maxWidth: 330 }, segment: { flexDirection: "row", borderWidth: 1, borderColor: line, borderRadius: 14, overflow: "hidden", backgroundColor: "#FFFDF7" }, segmentOption: { flex: 1, paddingVertical: 13, alignItems: "center" }, segmentActive: { backgroundColor: ink }, disabled: { opacity: 0.5 }, segmentText: { color: ink, fontWeight: "600", fontSize: 13 }, segmentTextActive: { color: "#FFFDF7" }, stepper: { backgroundColor: "#FFFDF7", borderColor: line, borderWidth: 1, borderRadius: 16, paddingHorizontal: 21, height: 70, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, stepperValue: { fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), color: ink, fontSize: 34, fontWeight: "700" }, stepperUnit: { color: "#777064", fontSize: 15, fontFamily: "System", fontWeight: "400" }, inputShell: { minHeight: 57, backgroundColor: "#FFFDF7", borderColor: line, borderWidth: 1, borderRadius: 14, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, input: { flex: 1, color: ink, fontSize: 16, paddingVertical: 13 }, totalCard: { marginTop: 20, backgroundColor: softMoss, padding: 18, borderRadius: 18 }, total: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", fontSize: 33, marginVertical: 4 }, primaryButton: { backgroundColor: ink, borderRadius: 15, minHeight: 55, alignItems: "center", justifyContent: "center", marginTop: 22 }, primaryText: { color: "#FFFDF7", fontWeight: "700", fontSize: 16 }, balanceCard: { backgroundColor: ink, borderRadius: 23, padding: 22, marginTop: 22 }, balance: { color: "#FFFDF7", fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 43, fontWeight: "700", letterSpacing: -1.5, marginVertical: 5 }, balanceUnit: { fontFamily: "System", fontSize: 16, fontWeight: "400", letterSpacing: 0 }, notice: { backgroundColor: softMoss, padding: 16, borderRadius: 14, flexDirection: "row", gap: 10, marginTop: 21 }, noticeText: { color: "#435539", fontSize: 12, lineHeight: 17, flex: 1 }, outlineFullButton: { alignItems: "center", justifyContent: "center", minHeight: 54, borderRadius: 14, borderWidth: 1, borderColor: ink, marginTop: 17 }, chartCard: { height: 280, backgroundColor: "#FFFDF7", borderRadius: 22, borderWidth: 1, borderColor: line, marginTop: 24, padding: 20, justifyContent: "flex-end" }, chart: { height: 195, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }, barGroup: { flex: 1, height: "100%", alignItems: "center", justifyContent: "flex-end", gap: 8 }, bar: { width: "100%", maxWidth: 20, borderRadius: 12 }, barLabel: { color: "#80796D", fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), fontSize: 10 }, targetLine: { position: "absolute", left: 20, right: 20, borderTopWidth: 1, borderColor: "#AA9E89", borderStyle: "dashed" }, targetText: { backgroundColor: "#FFFDF7", alignSelf: "flex-end", marginTop: -8, color: "#8A8173", fontSize: 9, paddingLeft: 5 }, statGrid: { flexDirection: "row", gap: 8, marginTop: 12 }, stat: { flex: 1, padding: 12, borderRadius: 14, backgroundColor: "#EAE4D8" }, statValue: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", fontSize: 18, marginTop: 6 }, journalLocked: { marginTop: 22, flexDirection: "row", gap: 12, alignItems: "center", padding: 17, borderWidth: 1, borderColor: line, borderStyle: "dashed", borderRadius: 16 }, journalTitle: { color: ink, fontWeight: "700", fontSize: 14, marginBottom: 2 },
+  safe: { flex: 1, backgroundColor: paper }, loading: { flex: 1, backgroundColor: paper, alignItems: "center", justifyContent: "center" }, topbar: { height: 68, paddingHorizontal: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, wordmark: { flexDirection: "row", alignItems: "center", gap: 9 }, headerGrass: { width: 31, height: 31, resizeMode: "contain" }, logo: { fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 25, fontWeight: "700", color: ink, letterSpacing: -0.7 }, walletPill: { borderWidth: 1, borderColor: line, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, flexDirection: "row", alignItems: "center", gap: 6 }, mono: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: ink, fontSize: 12 }, scroll: { paddingHorizontal: 22, paddingTop: 15, paddingBottom: 108 }, eyebrowRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }, eyebrow: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: "#777064", letterSpacing: 1.6, fontSize: 10, marginTop: 23, marginBottom: 10 }, hero: { minHeight: 305, borderWidth: 1, borderColor: line, borderRadius: 26, overflow: "hidden", backgroundColor: "#DED8C9", padding: 22, justifyContent: "flex-end" }, grass: { position: "absolute", width: "112%", height: 290, top: -35, right: -22, opacity: 0.74 }, heroTitle: { fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 39, lineHeight: 38, fontWeight: "700", color: "#FFFDF5", letterSpacing: -1.2, textShadowColor: "rgba(0,0,0,0.35)", textShadowRadius: 8 }, heroCopy: { color: "#FFFDF5", fontSize: 13, lineHeight: 19, maxWidth: 232, marginTop: 10, textShadowColor: "rgba(0,0,0,0.45)", textShadowRadius: 5 }, timeCard: { marginTop: 16, borderRadius: 22, padding: 19, backgroundColor: "#FFFDF7", borderWidth: 1, borderColor: line }, monoLabel: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: "#7A7367", letterSpacing: 1.2, fontSize: 10 }, time: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 48, lineHeight: 58, letterSpacing: -2, marginTop: 3 }, track: { height: 7, borderRadius: 6, backgroundColor: "#E4DECF", marginTop: 12, overflow: "hidden" }, fill: { height: "100%", borderRadius: 6 }, timeFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 11 }, small: { color: "#777064", fontSize: 12, lineHeight: 17, flexShrink: 1 }, link: { color: ink, fontWeight: "700", fontSize: 12, textDecorationLine: "underline" }, rule: { height: 1, backgroundColor: line, marginVertical: 23 }, releaseRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, release: { color: ink, fontSize: 26, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", marginVertical: 2 }, outlineButton: { paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: ink, borderRadius: 11 }, outlineText: { color: ink, fontWeight: "700", fontSize: 13 }, disclaimer: { color: "#9A9387", fontSize: 11, lineHeight: 16, marginTop: 26 }, nav: { height: 78, position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: "#FFFDF7", borderTopWidth: 1, borderColor: line, flexDirection: "row", justifyContent: "space-around", paddingTop: 13 }, navItem: { minWidth: 48, alignItems: "center", gap: 3 }, navText: { color: "#928A7D", fontSize: 9 }, navTextActive: { color: ink, fontWeight: "700" }, pageTitle: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", fontSize: 43, lineHeight: 44, letterSpacing: -1.5, marginTop: 8 }, pageCopy: { color: "#716A5F", fontSize: 15, lineHeight: 22, marginTop: 12, maxWidth: 330 }, segment: { flexDirection: "row", borderWidth: 1, borderColor: line, borderRadius: 14, overflow: "hidden", backgroundColor: "#FFFDF7" }, segmentOption: { flex: 1, paddingVertical: 13, alignItems: "center" }, segmentActive: { backgroundColor: ink }, disabled: { opacity: 0.5 }, segmentText: { color: ink, fontWeight: "600", fontSize: 13 }, segmentTextActive: { color: "#FFFDF7" }, stepper: { backgroundColor: "#FFFDF7", borderColor: line, borderWidth: 1, borderRadius: 16, paddingHorizontal: 21, height: 70, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, stepperValue: { fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), color: ink, fontSize: 34, fontWeight: "700" }, stepperUnit: { color: "#777064", fontSize: 15, fontFamily: "System", fontWeight: "400" }, inputShell: { minHeight: 57, backgroundColor: "#FFFDF7", borderColor: line, borderWidth: 1, borderRadius: 14, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, input: { flex: 1, color: ink, fontSize: 16, paddingVertical: 13 }, totalCard: { marginTop: 20, backgroundColor: softMoss, padding: 18, borderRadius: 18 }, total: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", fontSize: 33, marginVertical: 4 }, primaryButton: { backgroundColor: ink, borderRadius: 15, minHeight: 55, alignItems: "center", justifyContent: "center", marginTop: 22 }, primaryText: { color: "#FFFDF7", fontWeight: "700", fontSize: 16 }, balanceCard: { backgroundColor: ink, borderRadius: 23, padding: 22, marginTop: 22 }, balance: { color: "#FFFDF7", fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontSize: 43, fontWeight: "700", letterSpacing: -1.5, marginVertical: 5 }, balanceUnit: { fontFamily: "System", fontSize: 16, fontWeight: "400", letterSpacing: 0 }, notice: { backgroundColor: softMoss, padding: 16, borderRadius: 14, flexDirection: "row", gap: 10, marginTop: 21 }, noticeText: { color: "#435539", fontSize: 12, lineHeight: 17, flex: 1 }, outlineFullButton: { alignItems: "center", justifyContent: "center", minHeight: 54, borderRadius: 14, borderWidth: 1, borderColor: ink, marginTop: 17 }, chartCard: { height: 280, backgroundColor: "#FFFDF7", borderRadius: 22, borderWidth: 1, borderColor: line, marginTop: 24, padding: 20, justifyContent: "flex-end" }, chart: { height: 195, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }, barGroup: { flex: 1, height: "100%", alignItems: "center", justifyContent: "flex-end", gap: 8 }, bar: { width: "100%", maxWidth: 20, borderRadius: 12 }, barLabel: { color: "#80796D", fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), fontSize: 10 }, targetLine: { position: "absolute", left: 20, right: 20, borderTopWidth: 1, borderColor: "#AA9E89", borderStyle: "dashed" }, targetText: { backgroundColor: "#FFFDF7", alignSelf: "flex-end", marginTop: -8, color: "#8A8173", fontSize: 9, paddingLeft: 5 }, statGrid: { flexDirection: "row", gap: 8, marginTop: 12 }, reflectStatus: { flexDirection: "row", gap: 8, marginTop: 22 }, stat: { flex: 1, padding: 12, borderRadius: 14, backgroundColor: "#EAE4D8" }, statValue: { color: ink, fontFamily: Platform.select({ ios: "Bodoni 72", android: "serif" }), fontWeight: "700", fontSize: 18, marginTop: 6 }, journalEditor: { minHeight: 230, borderColor: line, borderWidth: 1, borderRadius: 18, backgroundColor: "#FFFDF7", padding: 15 }, journalInput: { color: ink, fontSize: 16, lineHeight: 24, minHeight: 165 }, editorFooter: { color: "#817A6E", fontSize: 11, borderTopColor: line, borderTopWidth: 1, paddingTop: 10 }, taskGroup: { backgroundColor: "#FFFDF7", borderColor: line, borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10 }, taskTitle: { color: ink, fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), fontSize: 11, letterSpacing: 1.1 }, taskHint: { color: "#817A6E", fontSize: 11, marginTop: 4, marginBottom: 9 }, taskRow: { flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 7 }, taskText: { color: ink, fontSize: 14, flex: 1 }, taskAdd: { flexDirection: "row", alignItems: "center", gap: 8, borderTopColor: line, borderTopWidth: 1, paddingTop: 8, marginTop: 3 }, taskInput: { color: ink, fontSize: 14, flex: 1, paddingVertical: 7 }, historyCard: { borderTopWidth: 1, borderColor: line, paddingVertical: 14 }, historyDate: { color: ink, fontWeight: "700", fontSize: 13 }, historyExcerpt: { color: "#514B41", fontSize: 13, lineHeight: 18, marginVertical: 5 }, journalLocked: { marginTop: 22, flexDirection: "row", gap: 12, alignItems: "center", padding: 17, borderWidth: 1, borderColor: line, borderStyle: "dashed", borderRadius: 16 }, journalTitle: { color: ink, fontWeight: "700", fontSize: 14, marginBottom: 2 },
 });
